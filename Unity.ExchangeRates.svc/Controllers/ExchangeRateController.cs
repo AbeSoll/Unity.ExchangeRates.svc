@@ -1,30 +1,75 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Unity.ExchangeRates.svc.Services;
+using Microsoft.Extensions.Logging;
+using System.Globalization;
 
 namespace Unity.ExchangeRates.svc.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/exchangerates")]
     public class ExchangeRateController : ControllerBase
     {
-        private readonly IExchangeRateService _exchangeRateService;
+        private readonly IExchangeRateService _service;
+        private readonly ILogger<ExchangeRateController> _logger;
 
-        public ExchangeRateController(IExchangeRateService exchangeRateService)
+        public ExchangeRateController(IExchangeRateService service, ILogger<ExchangeRateController> logger)
         {
-            _exchangeRateService = exchangeRateService;
+            _service = service;
+            _logger = logger;
         }
 
-        [HttpGet("bnm")]
-        public async Task<IActionResult> GetBnmRates()
+        // 1. Get Latest Rates (For all Currencies)
+        // URL: GET /api/exchangerates
+        [HttpGet]
+        public async Task<IActionResult> GetLatestRates(CancellationToken cancellationToken)
         {
             try
             {
-                var rates = await _exchangeRateService.GetRatesFromBnmAsync();
-                return Ok(rates);
+                var result = await _service.GetRatesFromBnmAsync(cancellationToken);
+                return Ok(result);
             }
-            catch (System.Exception ex)
+            catch (OperationCanceledException)
             {
-                return StatusCode(500, new { message = "Error fetching rates from BNM", error = ex.Message });
+                return StatusCode(503, new { message = "Request cancelled or timed out" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching latest rates");
+                return StatusCode(500, new { message = "Error fetching latest rates", error = ex.Message });
+            }
+        }
+
+        // 2. Get Specific Currency & Date (For the future Scheduled Job)
+        // URL: GET /api/exchangerates/usd/2026-02-04
+        [HttpGet("{currency}/{date}")]
+        public async Task<IActionResult> GetRateByDate(string currency, string date, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Strict date format: YYYY-MM-DD
+                if (!DateTime.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                {
+                    return BadRequest(new { message = "Invalid date format. Please use YYYY-MM-DD" });
+                }
+
+                var result = await _service.GetRateByDateAsync(currency, date, cancellationToken);
+
+                if (result == null)
+                {
+                    return NotFound(new { message = $"No rate found for {currency.ToUpper()} on {date}. Usually because it's a holiday or weekend." });
+                }
+
+                return Ok(result);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Request cancelled for {Currency} {Date}", currency, date);
+                return StatusCode(503, new { message = "Request cancelled or timed out" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching history rate for {Currency} {Date}", currency, date);
+                return StatusCode(500, new { message = "Error fetching history rate", error = ex.Message });
             }
         }
     }

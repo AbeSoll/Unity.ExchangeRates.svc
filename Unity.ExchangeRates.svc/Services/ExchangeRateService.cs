@@ -1,35 +1,112 @@
-﻿using System.Net.Http.Json;
+﻿using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Web;
+using Unity.ExchangeRates.svc.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Unity.ExchangeRates.svc.Services
 {
     public class ExchangeRateService : IExchangeRateService
     {
         private readonly HttpClient _httpClient;
-        private readonly string _baseUrl;
+        private readonly ILogger<ExchangeRateService> _logger;
 
-        public ExchangeRateService(HttpClient httpClient, IConfiguration config)
+        public ExchangeRateService(HttpClient httpClient, ILogger<ExchangeRateService> logger)
         {
             _httpClient = httpClient;
-
-            // Fix: Pulling the base URL from appsettings.json
-            // If the config is missing, it uses the official public API as fallback
-            _baseUrl = config["BnmApiConfig:BaseUrl"] ?? "https://api.bnm.gov.my/public/exchange-rate";
-
-            // Mandatory BNM header for authentication/format
-            _httpClient.DefaultRequestHeaders.Clear();
-            _httpClient.DefaultRequestHeaders.Add("Accept", "application/vnd.BNM.API.v1+json");
+            _logger = logger;
+            // Do NOT clear DefaultRequestHeaders here — configured when registering the client.
         }
 
-        public async Task<object> GetRatesFromBnmAsync()
+        public async Task<JsonElement> GetRatesFromBnmAsync(CancellationToken cancellationToken = default)
         {
-            // URL: https://api.bnm.gov.my/public/exchange-rate
-            var response = await _httpClient.GetAsync(_baseUrl);
+            try
+            {
+                // Use base address (configured in Program.cs)
+                var response = await _httpClient.GetAsync(string.Empty, cancellationToken).ConfigureAwait(false);
 
-            // This checks if the call succeeded (200 OK)
-            response.EnsureSuccessStatusCode();
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await SafeReadAsStringAsync(response).ConfigureAwait(false);
+                    _logger.LogWarning("GetRatesFromBnmAsync failed. StatusCode: {StatusCode}, Body: {Body}", response.StatusCode, body);
+                    response.EnsureSuccessStatusCode();
+                }
 
-            // Returns the full JSON (data + meta)
-            return await response.Content.ReadFromJsonAsync<object>() ?? new { };
+                var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken).ConfigureAwait(false);
+                return json;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("GetRatesFromBnmAsync cancelled.");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unhandled error while fetching latest rates from BNM.");
+                throw;
+            }
+        }
+
+        public async Task<BnmApiResponse?> GetRateByDateAsync(string currency, string date, CancellationToken cancellationToken = default)
+        {
+            // Encode path segments to avoid malformed urls
+            var encodedCurrency = HttpUtility.UrlEncode(currency.ToUpperInvariant());
+            var encodedDate = HttpUtility.UrlEncode(date);
+
+            // Build relative URI with query
+            var relative = $"{encodedCurrency}/date/{encodedDate}?session=1700&quote=rm";
+
+            try
+            {
+                var response = await _httpClient.GetAsync(relative, cancellationToken).ConfigureAwait(false);
+
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _logger.LogInformation("Rate not found for {Currency} on {Date} (BNM returned 404).", currency, date);
+                    return null;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await SafeReadAsStringAsync(response).ConfigureAwait(false);
+                    _logger.LogWarning("GetRateByDateAsync unexpected status. Currency={Currency}, Date={Date}, Status={Status}, Body={Body}",
+                        currency, date, response.StatusCode, body);
+                    response.EnsureSuccessStatusCode();
+                }
+
+                var result = await response.Content.ReadFromJsonAsync<BnmApiResponse>(cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                // Optional: verify returned session to be safe (defensive)
+                if (result?.Meta?.Session != null && result.Meta.Session != "1700")
+                {
+                    _logger.LogWarning("BNM returned unexpected session {Session} for {Currency} {Date}", result.Meta.Session, currency, date);
+                }
+
+                return result;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("GetRateByDateAsync cancelled for {Currency} {Date}.", currency, date);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching rate for {Currency} on {Date}.", currency, date);
+                throw;
+            }
+        }
+
+        private static async Task<string> SafeReadAsStringAsync(HttpResponseMessage response)
+        {
+            try
+            {
+                return await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
     }
 }
