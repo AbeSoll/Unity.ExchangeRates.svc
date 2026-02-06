@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Web;
 using Unity.ExchangeRates.svc.Models;
 using Microsoft.Extensions.Logging;
+using Unity.ExchangeRates.svc.Data; // Added to allow database access
 
 namespace Unity.ExchangeRates.svc.Services
 {
@@ -11,11 +12,14 @@ namespace Unity.ExchangeRates.svc.Services
     {
         private readonly HttpClient _httpClient;
         private readonly ILogger<ExchangeRateService> _logger;
+        private readonly AppDbContext _dbContext; // Field to hold database connection
 
-        public ExchangeRateService(HttpClient httpClient, ILogger<ExchangeRateService> logger)
+        // Updated constructor to inject AppDbContext
+        public ExchangeRateService(HttpClient httpClient, ILogger<ExchangeRateService> logger, AppDbContext dbContext)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _dbContext = dbContext; // Initialize database context
             // Do NOT clear DefaultRequestHeaders here — configured when registering the client.
         }
 
@@ -95,6 +99,63 @@ namespace Unity.ExchangeRates.svc.Services
                 _logger.LogError(ex, "Error fetching rate for {Currency} on {Date}.", currency, date);
                 throw;
             }
+        }
+
+        public async Task<bool> SyncDailyRatesAsync(string date, CancellationToken cancellationToken = default)
+        {
+            // 1. Get all active currencies
+            var activeCurrencies = _dbContext.Currencies
+                .Where(c => !c.IsDeleted)
+                .ToList();
+
+            if (!activeCurrencies.Any())
+            {
+                _logger.LogError("No active currencies found in DB. Please seed the Currency table first.");
+                return false;
+            }
+
+            foreach (var currency in activeCurrencies)
+            {
+                try
+                {
+                    // FIX 1: Guna 'currency.Id' (sebab dalam Model Currency, kita map Id -> CurrencyCode)
+                    var bnmData = await GetRateByDateAsync(currency.Id, date, cancellationToken);
+
+                    if (bnmData?.Data?.Rate != null)
+                    {
+                        var history = new ExchangeRateHistory
+                        {
+                            // FIX 2: Set Id = 0 (Sebab required, tapi EF akan ignore dan auto-generate nombor baru)
+                            Id = 0,
+
+                            // FIX 3: Guna 'currency.Id' sini juga
+                            CurrencyCode = currency.Id,
+
+                            RateDate = DateTime.Parse(date),
+                            EffectiveDate = DateTime.Parse(date),
+
+                            BuyingRate = bnmData.Data.Rate.BuyingRate,
+                            SellingRate = bnmData.Data.Rate.SellingRate,
+                            MiddleRate = bnmData.Data.Rate.MiddleRate,
+
+                            // FIX 4: Mesti isi sebab BaseEntity mungkin guna keyword 'required' atau setting strict
+                            CreatedOn = DateTime.Now,
+                            CreatedBy = "System_Sync"
+                        };
+
+                        _dbContext.ExchangeRateHistories.Add(history);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // FIX 5: Guna 'currency.Id' untuk log
+                    _logger.LogError(ex, "Failed to sync rate for {Currency}", currency.Id);
+                }
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            return true;
         }
 
         private static async Task<string> SafeReadAsStringAsync(HttpResponseMessage response)

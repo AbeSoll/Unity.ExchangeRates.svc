@@ -72,5 +72,41 @@ namespace Unity.ExchangeRates.svc.Controllers
                 return StatusCode(500, new { message = "Error fetching history rate", error = ex.Message });
             }
         }
+
+        // 3. Sync Daily Rates Manually (Trigger Endpoint)
+        // URL: POST /api/exchangerates/sync/2026-02-04
+        // This endpoint forces the system to fetch rates for all active currencies and save them to the database.
+        [HttpPost("sync/{date}")]
+        public async Task<IActionResult> SyncRates(string date, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Validate date format strictly before processing
+                if (!DateTime.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                {
+                    return BadRequest(new { message = "Invalid date format. Use YYYY-MM-DD." });
+                }
+
+                _logger.LogInformation("Starting manual sync for date: {Date}", date);
+
+                // Call the service method we just created to sync and save to DB
+                var success = await _service.SyncDailyRatesAsync(date, cancellationToken);
+
+                if (success)
+                {
+                    return Ok(new { message = $"Rates for {date} successfully synced to database." });
+                }
+                else
+                {
+                    // This happens if no active currencies are found in the DB (Seed issue)
+                    return StatusCode(500, new { message = "Sync process failed or no currencies found. Check logs." });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during manual sync for date {Date}", date);
+                return StatusCode(500, new { message = "Error during manual sync", error = ex.Message });
+            }
+        }
     }
 }

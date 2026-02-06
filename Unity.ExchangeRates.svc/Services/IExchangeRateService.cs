@@ -10,5 +10,8 @@ namespace Unity.ExchangeRates.svc.Services
 
         // Returns the BnmApiResponse model for structured data access
         Task<BnmApiResponse?> GetRateByDateAsync(string currency, string date, CancellationToken cancellationToken = default);
+
+        // ADDING THIS: Method for sync dan save to DB
+        Task<bool> SyncDailyRatesAsync(string date, CancellationToken cancellationToken = default);
     }
 }
