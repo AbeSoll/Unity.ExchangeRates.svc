@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!--
+    Api-specific packages only.
+    EF Core, FluentResults, FluentValidation, Polly, Hangfire, Mediator.Abstractions
+    all flow in transitively through the 5 layer project references below.
+  -->
+  <ItemGroup>
+    <PackageReference Include="AutoMapper" Version="13.0.1" />
+    <PackageReference Include="Mediator.SourceGenerator" Version="3.0.1">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.0" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Unity.ExchangeRates.Domain\Unity.ExchangeRates.Domain.csproj" />
+    <ProjectReference Include="..\Unity.ExchangeRates.Infrastructure\Unity.ExchangeRates.Infrastructure.csproj" />
+    <ProjectReference Include="..\Unity.ExchangeRates.Repository\Unity.ExchangeRates.Repository.csproj" />
+    <ProjectReference Include="..\Unity.ExchangeRates.Service\Unity.ExchangeRates.Service.csproj" />
+    <ProjectReference Include="..\Unity.ExchangeRates.Shared\Unity.ExchangeRates.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

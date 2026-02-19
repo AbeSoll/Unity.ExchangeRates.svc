@@ -1,9 +1,9 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace Unity.ExchangeRates.svc.Migrations
+namespace Unity.ExchangeRates.Infrastructure.Migrations
 {
     /// <inheritdoc />
     public partial class InitialDB : Migration

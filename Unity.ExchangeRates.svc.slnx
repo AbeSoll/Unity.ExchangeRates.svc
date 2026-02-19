@@ -1,3 +1,20 @@
 <Solution>
-  <Project Path="Unity.ExchangeRates.svc/Unity.ExchangeRates.svc.csproj" />
+  <Folder Name="/1-Domain/">
+    <Project Path="src/Unity.ExchangeRates.Domain/Unity.ExchangeRates.Domain.csproj" />
+  </Folder>
+  <Folder Name="/2-Repository/">
+    <Project Path="src/Unity.ExchangeRates.Repository/Unity.ExchangeRates.Repository.csproj" />
+  </Folder>
+  <Folder Name="/3-Service/">
+    <Project Path="src/Unity.ExchangeRates.Service/Unity.ExchangeRates.Service.csproj" />
+  </Folder>
+  <Folder Name="/4-Apps/">
+    <Project Path="src/Unity.ExchangeRates.Api/Unity.ExchangeRates.Api.csproj" />
+  </Folder>
+  <Folder Name="/4-Cross Cutting/">
+    <Project Path="src/Unity.ExchangeRates.Shared/Unity.ExchangeRates.Shared.csproj" />
+  </Folder>
+  <Folder Name="/4-Infrastructure/">
+    <Project Path="src/Unity.ExchangeRates.Infrastructure/Unity.ExchangeRates.Infrastructure.csproj" />
+  </Folder>
 </Solution>

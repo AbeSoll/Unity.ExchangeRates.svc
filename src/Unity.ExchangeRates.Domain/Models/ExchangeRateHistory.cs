@@ -1,7 +1,7 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace Unity.ExchangeRates.svc.Models
+namespace Unity.ExchangeRates.Domain.Models
 {
     [Table("ExchangeRateHistory")]
     public class ExchangeRateHistory : BaseEntity<int>
@@ -22,7 +22,6 @@ namespace Unity.ExchangeRates.svc.Models
 
         public DateTime EffectiveDate { get; set; }
 
-        // navigation back to Currency
         [ForeignKey(nameof(CurrencyCode))]
         public Currency? Currency { get; set; }
     }
