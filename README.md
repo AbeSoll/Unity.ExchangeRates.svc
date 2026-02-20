@@ -21,12 +21,12 @@ Clean Architecture with CQRS pattern.
 
 ```
 src/
-??? Unity.ExchangeRates.Api              # 4-Apps – Controllers, Middlewares, ViewModels, Program.cs
-??? Unity.ExchangeRates.Domain           # 1-Domain – Entities, Exceptions
-??? Unity.ExchangeRates.Repository       # 2-Repository – Repository interfaces
-??? Unity.ExchangeRates.Service          # 3-Service – Commands, Queries, Validators, Behaviors, Errors
-??? Unity.ExchangeRates.Infrastructure   # 4-Infrastructure – EF DbContext, Repository implementations, Interceptors
-??? Unity.ExchangeRates.Shared           # 4-Cross Cutting – Hangfire jobs, HTTP clients, Polly policies
+-- Unity.ExchangeRates.Api              # 4-Apps â€“ Controllers, Middlewares, ViewModels, Program.cs
+-- Unity.ExchangeRates.Domain           # 1-Domain â€“ Entities, Exceptions
+-- Unity.ExchangeRates.Repository       # 2-Repository â€“ Repository interfaces
+-- Unity.ExchangeRates.Service          # 3-Service â€“ Commands, Queries, Validators, Behaviors, Errors
+-- Unity.ExchangeRates.Infrastructure   # 4-Infrastructure â€“ EF DbContext, Repository implementations, Interceptors
+-- Unity.ExchangeRates.Shared           # 4-Cross Cutting â€“ Hangfire jobs, HTTP clients, Polly policies
 ```
 
 ## Setup
@@ -62,7 +62,7 @@ Follow these steps to get your development environment set up:
 ### Hangfire Dashboard
 * /hangfire
 ### API
-* GET `/api/exchangerates/{currency}/{date}` – Get exchange rate from BNM
-* POST `/api/exchangerates/sync` – Sync exchange rates for all active currencies
+* GET `/api/exchangerates/{currency}/{date}` â€“ Get exchange rate from BNM
+* POST `/api/exchangerates/sync` â€“ Sync exchange rates for all active currencies
 
 ## Learning Resources
