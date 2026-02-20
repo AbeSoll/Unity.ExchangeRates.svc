@@ -50,11 +50,11 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseHangfireDashboard();
 }
 
 app.UseHttpsRedirection();
 app.UseCors();
-app.UseHangfireDashboard();
 app.UseAuthorization();
 app.MapControllers();
 

@@ -32,7 +32,7 @@ namespace Unity.ExchangeRates.Service.Behaviors
                 {
                     appId = (string?)message?.GetType().GetProperty("appId")?.GetValue(message, null),
                     errorCode = f.ErrorCode,
-                    errorMsg = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(f.ErrorMessage)
+                    errorMsg = f.ErrorMessage
                 });
 
                 _logger.LogError("Validation Error: {@errors}", errors);

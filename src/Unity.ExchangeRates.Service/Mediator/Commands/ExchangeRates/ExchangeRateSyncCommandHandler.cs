@@ -47,8 +47,8 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                         {
                             Id = 0,
                             CurrencyCode = curr.Id,
-                            RateDate = DateTime.Parse(request.date!),
-                            EffectiveDate = DateTime.Parse(request.date!),
+                            RateDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                            EffectiveDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
                             BuyingRate = rateData.Rate?.BuyingRate ?? 0,
                             SellingRate = rateData.Rate?.SellingRate ?? 0,
                             MiddleRate = rateData.Rate?.MiddleRate ?? 0,
@@ -78,7 +78,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
             }
             catch (Exception ex)
             {
-                _logger.LogError("ExchangeRateSyncCommandHandler response: " + JsonConvert.SerializeObject(ex));
+                _logger.LogError(ex, "ExchangeRateSyncCommandHandler failed for date={date}", request.date);
                 return Result.Fail(new GeneralError() { appId = request.appId, errorCode = "00500", errorMsg = ex.Message });
             }
         }

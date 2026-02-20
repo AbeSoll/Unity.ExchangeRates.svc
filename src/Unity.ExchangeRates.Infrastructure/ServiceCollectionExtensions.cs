@@ -22,11 +22,13 @@ namespace Unity.ExchangeRates.Infrastructure
         private static IServiceCollection AddContext(this IServiceCollection services, IConfiguration configuration)
         {
             var connectionString = configuration.GetConnectionString("DefaultConnection");
-            services.AddDbContext<AppDbContext>(options =>
-            {
-                options.UseSqlServer(connectionString, sqlServerOptions => sqlServerOptions.CommandTimeout(600));
-            });
             services.AddScoped<EntitySaveChangeInterceptor>();
+            services.AddDbContext<AppDbContext>((sp, options) =>
+            {
+                var interceptor = sp.GetRequiredService<EntitySaveChangeInterceptor>();
+                options.UseSqlServer(connectionString, sqlServerOptions => sqlServerOptions.CommandTimeout(600))
+                       .AddInterceptors(interceptor);
+            });
 
             return services;
         }

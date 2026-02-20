@@ -12,11 +12,11 @@ namespace Unity.ExchangeRates.Service.Common.Errors
 
         public Dictionary<string, object> Metadata { get; private set; } = new Dictionary<string, object>();
 
-        public string appId { get; set; }
+        public string appId { get; set; } = string.Empty;
         public string status { get; set; } = StandardFormat.FailedStatus;
         public string timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture);
         public string traceId { get; set; } = Activity.Current?.Id;
-        public string errorCode { get; set; }
+        public string errorCode { get; set; } = string.Empty;
         public string errorMsg { get; set; } = ResponseMessage.VALIDATOR_ERROR;
         public object? data { get; set; }
 

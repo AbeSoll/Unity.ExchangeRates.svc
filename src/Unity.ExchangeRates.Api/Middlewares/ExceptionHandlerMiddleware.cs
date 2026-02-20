@@ -26,7 +26,7 @@ namespace Unity.ExchangeRates.Api.Middlewares
             }
             catch (Exception error)
             {
-                _logger.LogError(error, error?.Message);
+                _logger.LogError(error, error.Message);
                 var response = context.Response;
                 response.ContentType = "application/json";
                 dynamic resultObject = new JObject();
