@@ -1,0 +1,52 @@
+using AutoMapper;
+using FluentResults;
+using Mediator;
+using Microsoft.AspNetCore.Mvc;
+using Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates;
+using Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates;
+using Unity.ExchangeRates.Service.Models.Results;
+using Unity.ExchangeRates.Api.Controllers.Base;
+using Unity.ExchangeRates.Api.ViewModels.Request;
+using Unity.ExchangeRates.Api.ViewModels.Response;
+
+namespace Unity.ExchangeRates.Api.Controllers
+{
+    [ApiController]
+    [Route("api/exchangerates")]
+    public class ExchangeRateController : BaseApiController
+    {
+        private readonly IMapper _mapper;
+        private readonly ISender _mediator;
+        private readonly ILogger<ExchangeRateController> _logger;
+
+        public ExchangeRateController(IMapper mapper, ISender mediator, ILogger<ExchangeRateController> logger)
+        {
+            _mapper = mapper;
+            _mediator = mediator;
+            _logger = logger;
+        }
+
+        [HttpGet("{currency}/{date}")]
+        [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(void), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(void), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetRate(string currency, string date, [FromQuery] string appId = "")
+        {
+            var request = new ExchangeRateRequest { appId = appId, currency = currency, date = date };
+            var query = _mapper.Map<ExchangeRateQuery>(request);
+            var result = await _mediator.Send(query);
+            return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
+        }
+
+        [HttpPost("sync")]
+        [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(void), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(void), StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> Sync([FromBody] ExchangeRateSyncRequest syncRequest)
+        {
+            var command = _mapper.Map<ExchangeRateSyncCommand>(syncRequest);
+            var result = await _mediator.Send(command);
+            return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
+        }
+    }
+}

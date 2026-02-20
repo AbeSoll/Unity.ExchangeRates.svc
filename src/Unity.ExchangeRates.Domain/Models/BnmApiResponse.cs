@@ -1,8 +1,7 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
-namespace Unity.ExchangeRates.svc.Models
+namespace Unity.ExchangeRates.Domain.Models
 {
-    // Main structure JSON from BNM
     public class BnmApiResponse
     {
         [JsonPropertyName("data")]
