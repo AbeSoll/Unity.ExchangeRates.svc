@@ -73,7 +73,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
             }
             catch (Exception ex)
             {
-                _logger.LogError("ExchangeRateQueryHandler response: " + JsonConvert.SerializeObject(ex));
+                _logger.LogError(ex, "ExchangeRateQueryHandler failed for currency={currency}, date={date}", request.currency, request.date);
                 return Result.Fail(new GeneralError() { appId = request.appId, errorCode = "00500", errorMsg = ex.Message });
             }
         }

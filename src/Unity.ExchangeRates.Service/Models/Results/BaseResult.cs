@@ -4,7 +4,7 @@ namespace Unity.ExchangeRates.Service.Models.Results
 {
     public class BaseResult
     {
-        public string appId { get; set; }
+        public string appId { get; set; } = string.Empty;
         public string status { get; set; } = "Success";
         public string timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture);
         public string traceId { get; set; } = Activity.Current?.Id;

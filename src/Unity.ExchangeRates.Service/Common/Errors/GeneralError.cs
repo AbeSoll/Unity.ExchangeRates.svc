@@ -6,15 +6,15 @@ namespace Unity.ExchangeRates.Service.Common.Errors
 {
     public sealed class GeneralError : IError
     {
-        public List<IError> Reasons => null;
-        public Dictionary<string, object> Metadata => null;
+        public List<IError> Reasons => new List<IError>();
+        public Dictionary<string, object> Metadata => new Dictionary<string, object>();
         public string? Message { get; private set; }
 
-        public string appId { get; set; }
+        public string appId { get; set; } = string.Empty;
         public string status { get; set; } = StandardFormat.FailedStatus;
         public string timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture);
         public string traceId { get; set; } = Activity.Current?.Id;
-        public string errorCode { get; set; }
+        public string errorCode { get; set; } = string.Empty;
         public string errorMsg { get; set; } = ResponseMessage.GENERAL_ERROR;
         public object? data { get; set; }
 
