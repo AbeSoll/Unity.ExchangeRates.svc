@@ -17,6 +17,11 @@
 13. [Logging Strategy](#13-logging-strategy)
 14. [Background Jobs (Hangfire)](#14-background-jobs-hangfire)
 15. [Key Design Decisions](#15-key-design-decisions)
+16. [The Interface Pattern — Why, How, and What If Not](#16-the-interface-pattern--why-how-and-what-if-not)
+17. [Error Handling — Full Deep-Dive](#17-error-handling--full-deep-dive)
+18. [Logger Implementation — Full Deep-Dive](#18-logger-implementation--full-deep-dive)
+19. [Unity Facility vs Unity Exchange Rates — Detailed Comparison](#19-unity-facility-vs-unity-exchange-rates--detailed-comparison)
+20. [Storing Data in .txt File Before Database](#20-storing-data-in-txt-file-before-database)
 
 ---
 
@@ -1004,3 +1009,607 @@ The Hangfire job syncs the **previous business day's** rates:
 | **AutoMapper between ViewModels ↔ CQRS** | Clean separation between API surface (ViewModels) and application layer (Commands/Queries) |
 | **EntitySaveChangeInterceptor** | Centralised audit field stamping — handlers don't need to set CreatedOn/ModifiedOn manually |
 | **6-project structure** | Follows Unity Facility template — consistent across team projects |
+
+---
+
+## 16. The Interface Pattern — Why, How, and What If Not
+
+### What Is an Interface?
+
+An interface is a **contract** — it defines _what_ methods exist but _not how_ they work. Think of it like a job description: it says "this person must be able to do X, Y, Z" but doesn't say how.
+
+### How Interfaces Work in This Project
+
+There are **3 key interfaces** in this project:
+
+| Interface | Defined In | Implemented By | Registered In |
+|---|---|---|---|
+| `IExchangeRateRepository` | Repository project | `ExchangeRateRepository` (Infrastructure) | Infrastructure `ServiceCollectionExtensions.cs` |
+| `IExchangeRateSyncJob` | Shared project | `ExchangeRateSyncJob` (Shared) | Shared `ServiceCollectionExtensions.cs` |
+| `IPipelineBehavior<,>` | Mediator library | `RequestValidationBehavior` (Service) | Service `ServiceCollectionExtensions.cs` |
+
+#### Example: `IExchangeRateRepository` — Step by Step
+
+**Step 1 — Define the contract** (Repository project):
+
+```csharp
+// Says "any repository must provide these 3 methods"
+public interface IExchangeRateRepository
+{
+    Task<List<Currency>> GetActiveCurrenciesAsync(CancellationToken cancellationToken);
+    Task AddRateHistoryAsync(ExchangeRateHistory history, CancellationToken cancellationToken);
+    Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+}
+```
+
+**Step 2 — Implement it** (Infrastructure project):
+
+```csharp
+// Says "HERE is how I actually do it — using EF Core"
+public class ExchangeRateRepository : IExchangeRateRepository
+{
+    private readonly AppDbContext _context;
+    public async Task<List<Currency>> GetActiveCurrenciesAsync(CancellationToken ct)
+        => await _context.Currencies.ToListAsync(ct);  // actual EF Core call
+    // ... other methods
+}
+```
+
+**Step 3 — Register in DI** (Infrastructure `ServiceCollectionExtensions.cs`):
+
+```csharp
+services.AddScoped<IExchangeRateRepository, ExchangeRateRepository>();
+// "When someone asks for IExchangeRateRepository, give them ExchangeRateRepository"
+```
+
+**Step 4 — Use via interface** (Service layer handler):
+
+```csharp
+public class ExchangeRateSyncCommandHandler
+{
+    private readonly IExchangeRateRepository _repository;  // depends on INTERFACE only
+
+    public ExchangeRateSyncCommandHandler(IExchangeRateRepository repository)
+    {
+        _repository = repository;  // DI injects ExchangeRateRepository automatically
+    }
+
+    public async ValueTask<Result<BaseResult>> Handle(...)
+    {
+        var currencies = await _repository.GetActiveCurrenciesAsync(ct);
+        // Handler has NO idea it's using EF Core. It just calls the interface.
+    }
+}
+```
+
+### Why Use Interfaces?
+
+| Benefit | Explanation | Example |
+|---|---|---|
+| **Loose coupling** | Service layer doesn't know about EF Core. Swap to Dapper, MongoDB, or a file without touching handlers. | Handler calls `_repository.GetActiveCurrenciesAsync()` — whether that reads from SQL, a file, or an API doesn't matter. |
+| **Testability** | In unit tests, create a fake (mock) repository that returns test data without a real database. | `var mockRepo = new Mock<IExchangeRateRepository>(); mockRepo.Setup(r => r.GetActiveCurrenciesAsync(...)).ReturnsAsync(testCurrencies);` |
+| **Separation of concerns** | The "what" (interface) lives in one project, the "how" (implementation) in another. | Interface in Repository project, implementation in Infrastructure project. |
+| **Swappability** | Change implementation without changing consumers. | Lead asks for `.txt` file storage? Create `TextFileExchangeRateRepository : IExchangeRateRepository` — handlers unchanged. |
+
+### What If You Remove Interfaces?
+
+If you used `ExchangeRateRepository` directly instead of `IExchangeRateRepository`:
+
+```csharp
+// WITHOUT interface — handler directly depends on concrete class
+public class ExchangeRateSyncCommandHandler
+{
+    private readonly ExchangeRateRepository _repository;  // ❌ Depends on concrete class
+}
+```
+
+| Problem | Why It's Bad |
+|---|---|
+| **Circular dependency** | Service must reference Infrastructure, but Infrastructure already references Service. Won't compile. |
+| **Can't unit test without a real database** | `ExchangeRateRepository` needs `AppDbContext` which needs SQL Server. Tests become slow and fragile. |
+| **Can't swap implementations** | Switch from EF Core to Dapper? Rewrite every handler. |
+| **Violates Dependency Inversion Principle** | High-level modules (handlers) should depend on abstractions (interfaces), not low-level modules (EF Core). |
+
+### Interface Usage Map
+
+```
+IExchangeRateRepository (Repository project)
+├── IMPLEMENTED BY: ExchangeRateRepository (Infrastructure/Repositories/)
+├── USED BY: ExchangeRateSyncCommandHandler (Service layer)
+└── REGISTERED: services.AddScoped<IExchangeRateRepository, ExchangeRateRepository>()
+
+IExchangeRateSyncJob (Shared project)
+├── IMPLEMENTED BY: ExchangeRateSyncJob (Shared/Jobs/)
+├── USED BY: Hangfire RecurringJob in Program.cs
+└── REGISTERED: services.AddScoped<IExchangeRateSyncJob, ExchangeRateSyncJob>()
+
+IPipelineBehavior<,> (Mediator library)
+├── IMPLEMENTED BY: RequestValidationBehavior (Service/Behaviors/)
+├── USED BY: Mediator pipeline — runs automatically before every handler
+└── REGISTERED: services.AddTransient(typeof(IPipelineBehavior<,>), typeof(RequestValidationBehavior<,>))
+
+IRequestHandler<,> (Mediator library)
+├── IMPLEMENTED BY: ExchangeRateQueryHandler, ExchangeRateSyncCommandHandler
+├── USED BY: Mediator — auto-discovers via source generator at compile time
+└── REGISTERED: Automatically by AddMediator() — no manual registration
+```
+
+---
+
+## 17. Error Handling — Full Deep-Dive
+
+This project has **3 layers of error handling** that work together:
+
+### Layer 1: FluentValidation Pipeline (Preventive)
+
+**Where:** `RequestValidationBehavior` in `Service/Behaviors/`
+**When:** Runs **before** every Mediator handler automatically.
+
+```
+HTTP Request
+    ↓
+Controller → _mediator.Send(query)
+    ↓
+┌───────────────────────────────────────┐
+│ RequestValidationBehavior (Pipeline)  │
+│                                       │
+│ 1. Find all IValidator<TRequest>      │
+│    e.g. ExchangeRateQueryValidator    │
+│                                       │
+│ 2. Run validators in parallel         │
+│    var results = await Task.WhenAll(  │
+│        _validators.Select(v =>        │
+│            v.ValidateAsync(ctx, ct))) │
+│                                       │
+│ 3. Collect failures                   │
+│                                       │
+│ 4a. If failures:                      │
+│     - Create ValidationError per fail │
+│     - Return FAILED Result            │
+│       (handler NEVER executes)        │
+│                                       │
+│ 4b. If no failures:                   │
+│     - Call next(message, ct)          │
+│     - Handler executes normally       │
+└───────────────────────────────────────┘
+```
+
+**Example failure:**
+
+```
+GET /api/exchangerates//2025-02-12   (empty currency)
+    ↓
+ExchangeRateQueryValidator: RuleFor(c => c.currency).NotEmpty() → FAILS
+    ↓
+Pipeline returns: Result.Fail(new ValidationError { errorCode = "00400", errorMsg = "Currency Is Required." })
+    ↓
+Handler NEVER runs. No BNM API call is made.
+    ↓
+BaseApiController.HandleValidationProblem() → HTTP 400
+```
+
+### Layer 2: FluentResults in Handlers (Business Logic Errors)
+
+**Where:** Inside each handler's `Handle()` method.
+**When:** After validation passes, during business logic.
+
+Handlers return `Result<BaseResult>` instead of throwing exceptions:
+
+```csharp
+// In ExchangeRateQueryHandler.Handle():
+var response = await _httpClient.GetAsync(url, ct);
+
+if (!response.IsSuccessStatusCode)
+{
+    // DON'T throw — return a typed failure
+    return Result.Fail(new GeneralError()
+    {
+        appId = request.appId, errorCode = "00400",
+        errorMsg = $"BNM API returned {response.StatusCode}"
+    });
+}
+
+var bnmData = await response.Content.ReadFromJsonAsync<BnmApiResponse>(ct);
+
+if (bnmData is null)
+{
+    return Result.Fail(new NotFoundError()
+    {
+        appId = request.appId, errorCode = "00404",
+        errorMsg = "No exchange rate data found for the given date."
+    });
+}
+
+// Success path
+return new BaseResult() { appId = request.appId, data = bnmData.Data };
+```
+
+**Why not throw exceptions?**
+- Exceptions are expensive (stack trace allocation)
+- `Result<T>` makes success/failure explicit in the return type
+- Controller can inspect error type to choose HTTP status code
+- No hidden control flow — you see all outcomes in the handler
+
+### Layer 3: ExceptionHandlerMiddleware (Safety Net)
+
+**Where:** `Middlewares/ExceptionHandlerMiddleware.cs` in Api project.
+**When:** Catches any exception that escapes Layers 1 and 2 — the last line of defence.
+
+```csharp
+public async Task Invoke(HttpContext context)
+{
+    try
+    {
+        await _next(context);  // ← entire request pipeline runs here
+    }
+    catch (Exception error)
+    {
+        _logger.LogError(error, error?.Message);  // ← ALWAYS logged
+
+        switch (error)
+        {
+            case ExchangeRatesDomainException:
+                response.StatusCode = 400;   // business rule violation
+                break;
+            case ValidationException e:
+                response.StatusCode = 400;   // FluentValidation threw (rare — pipeline usually catches)
+                break;
+            default:
+                response.StatusCode = 500;   // truly unexpected
+                break;
+        }
+        await response.WriteAsync(resultObject.ToString());
+    }
+}
+```
+
+**Registered in Program.cs as the FIRST middleware:**
+
+```csharp
+app.UseMiddleware<ExceptionHandlerMiddleware>();  // ← must be first
+```
+
+**Why first?** It wraps everything. If Swagger throws, if CORS fails, if authorization fails — this catches it.
+
+### How All 3 Layers Work Together
+
+```
+HTTP Request
+    ↓
+╔═══════════════════════════════════════════╗
+║ ExceptionHandlerMiddleware (Layer 3)      ║  ← Wraps EVERYTHING
+║   try {                                   ║
+║     Controller → _mediator.Send()         ║
+║       ↓                                   ║
+║     ┌──────────────────────────────┐      ║
+║     │ Validation Pipeline (L1)     │      ║  ← Catches bad input
+║     │ If invalid → return 400      │      ║
+║     │ If valid ↓                   │      ║
+║     ├──────────────────────────────┤      ║
+║     │ Handler (Layer 2)            │      ║  ← Business logic errors
+║     │ BNM error → Fail(400)        │      ║
+║     │ Not found → Fail(404)        │      ║
+║     │ Success → Ok(BaseResult)     │      ║
+║     └──────────────────────────────┘      ║
+║       ↓                                   ║
+║     BaseApiController.ApiResponse()       ║  ← Maps Result → HTTP
+║   } catch {                               ║
+║     → 400 / 500 JSON                     ║  ← Safety net
+║   }                                       ║
+╚═══════════════════════════════════════════╝
+    ↓
+HTTP Response
+```
+
+### Complete Error → HTTP Status Code Mapping
+
+| Source | Error Type | HTTP Code | Example |
+|---|---|---|---|
+| Validation pipeline | `ValidationError` | 400 | Empty currency, bad date format |
+| Handler | `GeneralError` | 400 | BNM API returned 500, timeout |
+| Handler | `NotFoundError` | 404 | BNM returned no data for date |
+| Handler catch block | `GeneralError` | 400 | Unexpected exception in handler |
+| Middleware | `ExchangeRatesDomainException` | 400 | Custom domain rule violation |
+| Middleware | `ValidationException` | 400 | FluentValidation threw directly |
+| Middleware | Any other exception | 500 | Null reference, DB connection lost |
+
+---
+
+## 18. Logger Implementation — Full Deep-Dive
+
+### How Serilog Is Set Up
+
+**Step 1 — NuGet packages** (Api .csproj):
+
+```xml
+<PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+<PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+```
+
+**Step 2 — Bootstrap in Program.cs** (FIRST, before any DI):
+
+```csharp
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)  // reads "Serilog" section from appsettings.json
+    .Enrich.FromLogContext()                         // adds SourceContext (class name) to each log entry
+    .CreateLogger();
+
+builder.Host.UseSerilog();  // replaces default .NET logging with Serilog
+```
+
+**Why first?** If any service registration throws during startup, Serilog is already active and captures the error. Without this, startup failures would be silent.
+
+**Step 3 — appsettings.json config:**
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `Default: Debug` | All app code logs at Debug and above | Repository debug logs, handler info logs — all captured |
+| `Override Microsoft: Information` | EF Core, DI only log Info+ | Suppresses noisy Debug from framework |
+| `Override Microsoft.AspNetCore: Warning` | Kestrel only logs Warning+ | Suppresses per-request Info logs |
+| `path: Logs/exchange-rates-.log` | Rolling file output | Produces `exchange-rates-20260223.log` |
+| `rollingInterval: Day` | New file each day | One log file per day |
+| `retainedFileCountLimit: 30` | Auto-delete after 30 days | Prevents disk filling up |
+
+### How `ILogger<T>` Works
+
+Every class that needs logging requests `ILogger<T>` via constructor injection. The `T` becomes `{SourceContext}` in log output — so you know which class produced each line.
+
+```csharp
+public class ExchangeRateRepository : IExchangeRateRepository
+{
+    private readonly ILogger<ExchangeRateRepository> _logger;
+    //                       ^^^^^^^^^^^^^^^^^^^^^^^^
+    //   T = "Unity.ExchangeRates.Infrastructure.Repositories.ExchangeRateRepository"
+    //   Appears as {SourceContext} in every log line from this class.
+
+    public ExchangeRateRepository(AppDbContext context, ILogger<ExchangeRateRepository> logger)
+    {
+        _logger = logger;  // DI provides this automatically — no manual setup
+    }
+
+    public async Task<List<Currency>> GetActiveCurrenciesAsync(CancellationToken ct)
+    {
+        _logger.LogDebug("Repository: GetActiveCurrenciesAsync called");
+        //   Output: [DBG] ...ExchangeRateRepository: Repository: GetActiveCurrenciesAsync called
+
+        var list = await _context.Currencies.ToListAsync(ct);
+
+        _logger.LogInformation("Repository: returned {Count} currencies", list.Count);
+        //   {Count} = structured logging (named property), NOT $"...{list.Count}" (string interpolation)
+        //   Serilog stores Count as a searchable key-value pair. Tools can filter by Count > 0.
+        return list;
+    }
+}
+```
+
+**Important:** Use `{PropertyName}` message templates, not `$"{variable}"` string interpolation. Templates enable structured logging — properties stored as searchable key-value pairs.
+
+### Where Every Logger Lives (Complete Map)
+
+| Class | Logger Type | What It Logs | Level |
+|---|---|---|---|
+| **Program.cs** | `Log.Information` / `Log.Fatal` | App startup, fatal shutdown errors | Info, Fatal |
+| **ExceptionHandlerMiddleware** | `ILogger<ExceptionHandlerMiddleware>` | Every uncaught exception with stack trace | Error |
+| **ExchangeRateQueryHandler** | `ILogger<ExchangeRateQueryHandler>` | BNM API URL, success, HTTP errors, exceptions | Debug, Info, Warning, Error |
+| **ExchangeRateSyncCommandHandler** | `ILogger<ExchangeRateSyncCommandHandler>` | Sync start, currency count, per-currency skip, completion stats, exceptions | Debug, Info, Warning, Error |
+| **ExchangeRateRepository** | `ILogger<ExchangeRateRepository>` | Method entry (Debug), row counts (Info) | Debug, Info |
+| **ExchangeRateSyncJob** | `ILogger<ExchangeRateSyncJob>` | Job trigger time + target date, success/failure | Info, Error |
+| **RequestValidationBehavior** | `ILogger<RequestValidationBehavior>` | Validation failure details | Error |
+
+### Log Level Guide
+
+| Level | When To Use | Example From This Project |
+|---|---|---|
+| `LogDebug` | Detailed diagnostics — method entry/exit | `"Repository: GetActiveCurrenciesAsync called"` |
+| `LogInformation` | Important business events completed | `"Synced 5/5 currencies for 2026-02-19"` |
+| `LogWarning` | Unexpected but recoverable — skipped items | `"Skip USD — BNM returned 404"` |
+| `LogError` | Failures needing attention | `"ExchangeRateSyncJob failed: {exception}"` |
+| `LogFatal` | App cannot continue (Program.cs only) | `"Application terminated unexpectedly"` |
+
+### Sample Log File Output
+
+File: `Logs/exchange-rates-20260223.log`
+
+```
+2026-02-23 00:00:00.123 +08:00 [INF] ...ExchangeRateSyncJob: Hangfire SyncDaily: Starting sync. Now=02/23/2026 00:00:00, TargetDate=2026-02-20
+2026-02-23 00:00:00.234 +08:00 [INF] ...ExchangeRateSyncCommandHandler: Starting sync for date=2026-02-20
+2026-02-23 00:00:00.345 +08:00 [DBG] ...ExchangeRateRepository: Repository: GetActiveCurrenciesAsync called
+2026-02-23 00:00:00.567 +08:00 [INF] ...ExchangeRateRepository: returned 5 currencies
+2026-02-23 00:00:00.678 +08:00 [DBG] ...ExchangeRateQueryHandler: Calling BNM API for currency=USD, date=2026-02-20
+2026-02-23 00:00:01.234 +08:00 [INF] ...ExchangeRateQueryHandler: Success for currency=USD, date=2026-02-20
+2026-02-23 00:00:01.345 +08:00 [DBG] ...ExchangeRateRepository: AddRateHistoryAsync for CurrencyCode=USD, RateDate=2026-02-20
+2026-02-23 00:00:05.678 +08:00 [DBG] ...ExchangeRateRepository: SaveChangesAsync called
+2026-02-23 00:00:05.890 +08:00 [INF] ...ExchangeRateRepository: SaveChangesAsync persisted 5 changes
+2026-02-23 00:00:05.901 +08:00 [INF] ...ExchangeRateSyncCommandHandler: Completed. Synced 5/5 currencies for 2026-02-20
+2026-02-23 00:00:05.912 +08:00 [INF] ...ExchangeRateSyncJob: Hangfire SyncDaily: Sync succeeded for 2026-02-20
+```
+
+**How to read:** `{Timestamp} [{Level}] {SourceContext}: {Message}` — the `SourceContext` (full class name) tells you exactly which class logged it.
+
+### Graceful Shutdown Logging
+
+```csharp
+try
+{
+    Log.Information("Exchange Rates API starting");  // ← logged on startup
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");  // ← if app crashes
+}
+finally
+{
+    Log.CloseAndFlush();  // ← CRITICAL: ensures all buffered entries written to file before process exits
+}
+```
+
+---
+
+## 19. Unity Facility vs Unity Exchange Rates — Detailed Comparison
+
+Both projects follow the **same clean architecture template**.
+
+### Architecture (Identical)
+
+| Aspect | Both Projects |
+|---|---|
+| Layer count | 6 projects |
+| Solution folders | 1-Domain, 2-Repository, 3-Service, 4-Apps, 4-Infrastructure, 4-Cross Cutting |
+| CQRS | Mediator source-gen |
+| Validation | FluentValidation + RequestValidationBehavior pipeline |
+| Result pattern | FluentResults (GeneralError, NotFoundError, ValidationError) |
+| Error shape | appId, status, timestamp, traceId, errorCode, errorMsg, data |
+| DI pattern | RegisterServiceModule / RegisterInfrastructureModule / RegisterSharedServiceModule |
+| Base controller | BaseApiController with ApiResponse + FluentResult error mapping |
+| Interceptor | EntitySaveChangeInterceptor |
+| Middleware | ExceptionHandlerMiddleware |
+| AutoMapper | InitialMapper profile in Api/Configurations |
+| Constants | CommonConstants (StandardFormat, ResponseMessage) |
+
+### Technology Differences
+
+| Aspect | Facility | Exchange Rates |
+|---|---|---|
+| .NET version | .NET 8 | .NET 9 |
+| Domain target | netstandard2.1 | net9.0 |
+| Mediator version | 2.1.7 | 3.0.1 |
+| Audit logging | Audit.NET + Audit.WebApi.Core | Not implemented (not needed yet) |
+| Rate limiting | AspNetCoreRateLimit | Not implemented |
+| API versioning | Microsoft.AspNetCore.Mvc.Versioning | Not implemented |
+| Health checks | EPP.Core.Web.HealthChecks | Not implemented |
+| Background jobs | None | Hangfire (daily sync) |
+| HTTP resilience | None | Polly retry (1s → 2s → 5s) |
+| External API | None (DB-only facility data) | BNM Exchange Rate API |
+| JSON serialisation | Newtonsoft.Json only | Newtonsoft.Json + System.Text.Json |
+
+### Business Domain Differences
+
+| Aspect | Facility | Exchange Rates |
+|---|---|---|
+| Purpose | Serves reference/lookup data (occupations, countries, postcodes, products) | Fetches and stores daily exchange rates from BNM |
+| Data source | SQL Server database only | BNM external API → SQL Server |
+| Operations | Read-only queries (GET endpoints) | Read (GET rate) + Write (POST sync, Hangfire auto-sync) |
+| Commands | No commands (read-only) | ExchangeRateSyncCommand (writes to DB) |
+| Queries | Multiple — References, Facilities, OccupationClasses, PostCodeCityStates, CountriesNationalities | Single — ExchangeRateQuery |
+| Entities | Many — ReferUp, OccupationalClass, CountryNationality, PostCodeCityState, Product, Company, etc. | 2 — Currency, ExchangeRateHistory |
+| Shared layer | File service, virus check service, audit log dispatcher | Hangfire jobs, HttpClient + Polly |
+
+### What Facility Has That Exchange Rates Doesn't (Yet)
+
+| Feature | Why Facility Has It | Whether Exchange Rates Needs It |
+|---|---|---|
+| Audit.NET logging | Regulatory audit trail requirement | Not needed yet — Serilog file logs are sufficient |
+| Rate limiting | Public-facing API protection | Can add later if API is exposed publicly |
+| API versioning | Multiple API consumers with backward compatibility | Can add later when v2 is needed |
+| Health checks | Kubernetes/load-balancer probes | Can add later for production deployment |
+| CORS with specific origins | Production frontend apps | Currently development-only with allow-all |
+
+---
+
+## 20. Storing Data in .txt File Before Database — Recommendation
+
+### The Requirement
+
+Your lead wants exchange rate data stored in `.txt` files first (before committing to a full SQL Server database).
+
+### Option A: TextFile Repository (Recommended)
+
+Create an alternative repository that writes to text files. Thanks to the interface pattern (Section 16), **zero handler changes** needed.
+
+**New file:** `Infrastructure/Repositories/TextFileExchangeRateRepository.cs`
+
+```csharp
+public class TextFileExchangeRateRepository : IExchangeRateRepository
+{
+    private readonly string _dataDir;
+    private readonly ILogger<TextFileExchangeRateRepository> _logger;
+    private readonly List<ExchangeRateHistory> _pending = new();
+
+    public TextFileExchangeRateRepository(IConfiguration config, ILogger<TextFileExchangeRateRepository> logger)
+    {
+        _dataDir = config.GetValue<string>("TextFileStorage:DataDirectory") ?? "Data";
+        _logger = logger;
+        Directory.CreateDirectory(_dataDir);
+    }
+
+    public Task<List<Currency>> GetActiveCurrenciesAsync(CancellationToken ct)
+    {
+        var file = Path.Combine(_dataDir, "currencies.txt");
+        if (!File.Exists(file)) return Task.FromResult(new List<Currency>());
+        return Task.FromResult(File.ReadAllLines(file)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .Select(l => {
+                var p = l.Split('|');
+                return new Currency { Id = p[0], CurrencyName = p[1], UnitBase = int.Parse(p[2]) };
+            }).ToList());
+    }
+
+    public Task AddRateHistoryAsync(ExchangeRateHistory history, CancellationToken ct)
+    {
+        _pending.Add(history);
+        _logger.LogDebug("TextFileRepo: Queued {CurrencyCode} for {RateDate}", history.CurrencyCode, history.RateDate);
+        return Task.CompletedTask;
+    }
+
+    public Task<int> SaveChangesAsync(CancellationToken ct)
+    {
+        foreach (var h in _pending)
+        {
+            var filePath = Path.Combine(_dataDir, $"rates-{h.RateDate:yyyy-MM-dd}.txt");
+            var line = $"{h.CurrencyCode}|{h.RateDate:yyyy-MM-dd}|{h.BuyingRate}|{h.SellingRate}|{h.MiddleRate}|{h.EffectiveDate:yyyy-MM-dd}|{DateTime.Now:yyyy-MM-dd HH:mm:ss}";
+            File.AppendAllText(filePath, line + Environment.NewLine);
+        }
+        var count = _pending.Count;
+        _logger.LogInformation("TextFileRepo: Saved {Count} records to text files", count);
+        _pending.Clear();
+        return Task.FromResult(count);
+    }
+}
+```
+
+**Switch in DI** (one line in Infrastructure `ServiceCollectionExtensions.cs`):
+
+```csharp
+// services.AddScoped<IExchangeRateRepository, ExchangeRateRepository>();       // DB mode
+services.AddScoped<IExchangeRateRepository, TextFileExchangeRateRepository>();   // File mode
+```
+
+**Seed `Data/currencies.txt`** (create manually):
+
+```
+USD|US Dollar|1
+EUR|Euro|1
+GBP|Pound Sterling|1
+SGD|Singapore Dollar|1
+JPY|Japanese Yen|100
+```
+
+**Output files produced:**
+
+```
+Data/
+├── currencies.txt            ← You create this (input)
+├── rates-2026-02-20.txt     ← USD|2026-02-20|4.4350|4.4650|4.4500|2026-02-20|2026-02-23 00:00:05
+├── rates-2026-02-21.txt
+└── rates-2026-02-23.txt
+```
+
+**To switch back to database later:** Uncomment `ExchangeRateRepository`, comment `TextFileExchangeRateRepository`. No other code changes.
+
+### Option B: Comment Out Hangfire + DB (Simpler but No Persistence)
+
+1. Comment the Hangfire recurring job in `Program.cs`
+2. Comment `AddHangfire()` + `AddHangfireServer()` in Shared `ServiceCollectionExtensions.cs`
+3. Comment `app.UseHangfireDashboard()` in `Program.cs`
+
+**Downside:** GET endpoint still works (reads live from BNM API), but POST sync and Hangfire won't persist. Data is lost.
+
+### Recommendation Summary
+
+| Approach | Effort | Data Persisted? | Hangfire Works? | Handlers Changed? | Switch to DB |
+|---|---|---|---|---|---|
+| **Option A: TextFile Repository** | Medium (1 new class) | Yes, to .txt files | Yes | None | Swap 1 DI line |
+| **Option B: Comment Hangfire** | Low (comment 3 blocks) | No | No | None | Uncomment |
+
+**Option A is recommended** — preserves data, Hangfire keeps running, demonstrates the interface pattern's power. When ready for the database, swap one DI registration line.

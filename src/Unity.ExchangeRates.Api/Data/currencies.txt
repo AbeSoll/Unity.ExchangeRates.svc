@@ -1,0 +1,27 @@
+AED|UAE Dirham|100
+AUD|Australian Dollar|1
+BND|Brunei Dollar|1
+CAD|Canadian Dollar|1
+CHF|Swiss Franc|1
+CNY|Chinese Renminbi|1
+EGP|Egyptian Pound|1
+EUR|Euro|1
+GBP|British Pound Sterling|1
+HKD|Hong Kong Dollar|100
+IDR|Indonesian Rupiah|100
+INR|Indian Rupee|100
+JPY|Japanese Yen|100
+KHR|Cambodian Riel|100
+KRW|Korean Won|100
+MMK|Myanmar Kyat|100
+NPR|Nepalese Rupee|100
+NZD|New Zealand Dollar|1
+PHP|Philippine Peso|100
+PKR|Pakistan Rupee|100
+SAR|Saudi Riyal|100
+SDR|Special Drawing Rights|1
+SGD|Singapore Dollar|1
+THB|Thai Baht|100
+TWD|Taiwan Dollar|100
+USD|US Dollar|1
+VND|Vietnamese Dong|100

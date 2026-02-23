@@ -140,6 +140,8 @@ Each error carries: `appId`, `status` ("Failed"), `timestamp`, `traceId`, `error
 
 `BaseApiController.ApiResponse()` inspects the error type and sets the correct HTTP status code.
 
+> For the full 3-layer error handling deep-dive (validation pipeline → handler results → middleware safety net), see `Complete-Technical-Guide.md` Section 17.
+
 ---
 
 ## Summary

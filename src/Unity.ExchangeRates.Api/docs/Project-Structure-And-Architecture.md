@@ -235,6 +235,13 @@ builder.Services.RegisterSharedServiceModule(configuration);    // Shared (Hangf
 - Three error types: `GeneralError` (400/500), `NotFoundError` (404), `ValidationError` (400)
 - `BaseApiController` inspects errors to set correct HTTP status codes
 - `ExceptionHandlerMiddleware` catches uncaught exceptions globally
+- See `Complete-Technical-Guide.md` Section 17 for the full 3-layer error handling deep-dive
+
+### Interfaces
+
+- Repository interfaces in `Unity.ExchangeRates.Repository`, implementations in `Unity.ExchangeRates.Infrastructure`
+- Enables swapping implementations (e.g. DB → text file) without changing handlers
+- See `Complete-Technical-Guide.md` Section 16 for step-by-step walkthrough
 
 ---
 
