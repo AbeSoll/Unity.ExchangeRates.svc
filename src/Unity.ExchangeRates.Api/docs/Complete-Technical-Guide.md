@@ -1386,15 +1386,46 @@ public class ExchangeRateRepository : IExchangeRateRepository
 
 ### Where Every Logger Lives (Complete Map)
 
-| Class | Logger Type | What It Logs | Level |
-|---|---|---|---|
-| **Program.cs** | `Log.Information` / `Log.Fatal` | App startup, fatal shutdown errors | Info, Fatal |
-| **ExceptionHandlerMiddleware** | `ILogger<ExceptionHandlerMiddleware>` | Every uncaught exception with stack trace | Error |
-| **ExchangeRateQueryHandler** | `ILogger<ExchangeRateQueryHandler>` | BNM API URL, success, HTTP errors, exceptions | Debug, Info, Warning, Error |
-| **ExchangeRateSyncCommandHandler** | `ILogger<ExchangeRateSyncCommandHandler>` | Sync start, currency count, per-currency skip, completion stats, exceptions | Debug, Info, Warning, Error |
-| **ExchangeRateRepository** | `ILogger<ExchangeRateRepository>` | Method entry (Debug), row counts (Info) | Debug, Info |
-| **ExchangeRateSyncJob** | `ILogger<ExchangeRateSyncJob>` | Job trigger time + target date, success/failure | Info, Error |
-| **RequestValidationBehavior** | `ILogger<RequestValidationBehavior>` | Validation failure details | Error |
+The following is a complete list of every class in the solution that uses logging, organised by project layer.
+
+#### Api Layer (`Unity.ExchangeRates.Api`)
+
+| # | Class | File Path | Logger Type | Injection Style | What It Logs | Log Levels Used |
+|---|---|---|---|---|---|---|
+| 1 | **Program.cs** | `Program.cs` | Serilog static `Log` class | Direct static call — no DI | App startup message (`Log.Information`), fatal crash on unhandled exception (`Log.Fatal`), flush on shutdown (`Log.CloseAndFlush`) | Information, Fatal |
+| 2 | **ExceptionHandlerMiddleware** | `Middlewares/ExceptionHandlerMiddleware.cs` | `ILogger<ExceptionHandlerMiddleware>` | Constructor injection | Every uncaught exception that bubbles up through the middleware pipeline — logs the exception object and its message | Error |
+| 3 | **ExchangeRateController** | `Controllers/ExchangeRateController.cs` | `ILogger<ExchangeRateController>` | Constructor injection | Logger is injected and available but **not actively used** in current code — reserved for future controller-level diagnostics (e.g., request tracing, input logging) | *(none currently)* |
+
+#### Service Layer (`Unity.ExchangeRates.Service`)
+
+| # | Class | File Path | Logger Type | Injection Style | What It Logs | Log Levels Used |
+|---|---|---|---|---|---|---|
+| 4 | **ExchangeRateQueryHandler** | `Mediator/Queries/ExchangeRates/ExchangeRateQueryHandler.cs` | `ILogger<ExchangeRateQueryHandler>` | Constructor injection | BNM API URL being called (Debug), non-success HTTP status codes (Warning), empty/null response from BNM (Warning), successful rate retrieval (Info), unhandled exceptions in handler (Error) | Debug, Information, Warning, Error |
+| 5 | **ExchangeRateSyncCommandHandler** | `Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandHandler.cs` | `ILogger<ExchangeRateSyncCommandHandler>` | Constructor injection | Sync start with target date (Info), active currency count loaded from repository (Debug), per-currency skip when BNM returns failure (Warning), completion stats — synced X/Y currencies (Info), unhandled exceptions in handler (Error) | Debug, Information, Warning, Error |
+| 6 | **RequestValidationBehavior** | `Behaviors/RequestValidationBehavior.cs` | `ILogger<RequestValidationBehavior<TRequest, TResponse>>` | Via `ILoggerFactory` — calls `logger.CreateLogger<>()` in constructor (needed because the class is open-generic) | Validation failure details — structured log of all `ValidationError` objects when any FluentValidation rule fails | Error |
+
+#### Infrastructure Layer (`Unity.ExchangeRates.Infrastructure`)
+
+| # | Class | File Path | Logger Type | Injection Style | What It Logs | Log Levels Used |
+|---|---|---|---|---|---|---|
+| 7 | **ExchangeRateRepository** | `Repositories/ExchangeRateRepository.cs` | `ILogger<ExchangeRateRepository>` | Constructor injection | Method entry for `GetActiveCurrenciesAsync` (Debug), currency count returned (Info), method entry for `AddRateHistoryAsync` with currency code and date (Debug), `SaveChangesAsync` entry (Debug) and persisted row count (Info) | Debug, Information |
+| 8 | **TextFileExchangeRateRepository** | `Repositories/TextFileExchangeRateRepository.cs` | `ILogger<TextFileExchangeRateRepository>` | Constructor injection | Method entry for `GetActiveCurrenciesAsync` (Debug), missing `currencies.txt` file warning with path (Warning), currency count returned with file path (Info), queued rate history record (Debug), `SaveChangesAsync` entry with pending count (Debug), persisted record count to text files (Info) | Debug, Information, Warning |
+
+#### Shared / Cross-Cutting Layer (`Unity.ExchangeRates.Shared`)
+
+| # | Class | File Path | Logger Type | Injection Style | What It Logs | Log Levels Used |
+|---|---|---|---|---|---|---|
+| 9 | **ExchangeRateSyncJob** | `Jobs/ExchangeRateSyncJob.cs` | `ILogger<ExchangeRateSyncJob>` | Constructor injection | Hangfire job trigger time and computed target date (Info), sync success confirmation (Info), sync failure with error list (Error), unhandled exception serialised as JSON (Error) | Information, Error |
+
+#### Summary Count
+
+| Project | Classes With Logger | Logger Actively Used |
+|---|---|---|
+| Api | 3 | 2 (ExchangeRateController has logger injected but unused) |
+| Service | 3 | 3 |
+| Infrastructure | 2 | 2 |
+| Shared | 1 | 1 |
+| **Total** | **9** | **8** |
 
 ### Log Level Guide
 
