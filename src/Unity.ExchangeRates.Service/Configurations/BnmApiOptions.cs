@@ -5,5 +5,6 @@ namespace Unity.ExchangeRates.Service.Configurations
         public string BaseUrl { get; set; } = string.Empty;
         public string AcceptHeader { get; set; } = "application/vnd.BNM.API.v1+json";
         public Dictionary<string, string> Endpoints { get; set; } = new();
+        public string DefaultSession { get; set; } = "1700";
     }
 }

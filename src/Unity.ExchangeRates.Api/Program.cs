@@ -6,19 +6,18 @@ using Unity.ExchangeRates.Service;
 using Unity.ExchangeRates.Shared;
 using Unity.ExchangeRates.Shared.Jobs;
 using Unity.ExchangeRates.Api.Configurations;
+using Unity.ExchangeRates.Api.Configurations.Logging;
 using Unity.ExchangeRates.Api.Middlewares;
 
 // ============================================================
-// Bootstrap Serilog first so startup errors are captured
+// Bootstrap
 // ============================================================
 var builder = WebApplication.CreateBuilder(args);
 
-Log.Logger = new LoggerConfiguration()
-    .ReadFrom.Configuration(builder.Configuration)
-    .Enrich.FromLogContext()
-    .CreateLogger();
-
-builder.Host.UseSerilog();
+// ============================================================
+// Configure Serilog 
+// ============================================================
+ConfigureLog(builder.Host);
 
 // ============================================================
 // Register all services — multi-layer pattern
@@ -117,4 +116,16 @@ static void ConfigureCors(IWebHostEnvironment environment, IServiceCollection se
             });
         });
     }
+}
+
+// ============================================================
+// Logging Configuration
+// ============================================================
+static void ConfigureLog(IHostBuilder hostBuilder)
+{
+    hostBuilder.UseSerilog((context, config) =>
+    {
+        config.ReadFrom.Configuration(context.Configuration);
+        config.Enrich.WithMethodName();
+    });
 }

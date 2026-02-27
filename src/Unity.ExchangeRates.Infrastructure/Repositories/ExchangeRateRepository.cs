@@ -25,19 +25,24 @@ namespace Unity.ExchangeRates.Infrastructure.Repositories
             return list;
         }
 
+        public async Task<ExchangeRateHistory?> GetRateByCreatedDateAsync(string currencyCode, DateTime createdDate, CancellationToken cancellationToken)
+        {
+            _logger.LogDebug("Repository: GetRateByCreatedDateAsync for CurrencyCode={CurrencyCode}, CreatedDate={CreatedDate}",
+                currencyCode, createdDate);
+            var history = await _context.ExchangeRateHistories
+                .FirstOrDefaultAsync(h => h.CurrencyCode == currencyCode && h.CreatedOn.Date == createdDate.Date, cancellationToken);
+            if (history is not null)
+                _logger.LogInformation("Repository: Found rate for {CurrencyCode} on CreatedDate={CreatedDate}", currencyCode, createdDate);
+            else
+                _logger.LogDebug("Repository: No rate found for {CurrencyCode} on CreatedDate={CreatedDate}", currencyCode, createdDate);
+            return history;
+        }
+
         public async Task AddRateHistoryAsync(ExchangeRateHistory history, CancellationToken cancellationToken)
         {
             _logger.LogDebug("Repository: AddRateHistoryAsync for CurrencyCode={CurrencyCode}, RateDate={RateDate}",
                 history.CurrencyCode, history.RateDate);
             await _context.ExchangeRateHistories.AddAsync(history, cancellationToken);
-        }
-
-        public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
-        {
-            _logger.LogDebug("Repository: SaveChangesAsync called");
-            var count = await _context.SaveChangesAsync(cancellationToken);
-            _logger.LogInformation("Repository: SaveChangesAsync persisted {Count} changes", count);
-            return count;
         }
     }
 }

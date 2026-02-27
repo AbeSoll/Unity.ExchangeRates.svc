@@ -6,7 +6,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
 {
     public class ExchangeRateSyncCommand : IRequest<Result<BaseResult>>
     {
-        public string? appId { get; set; }
         public string? date { get; set; }
+        public string? session { get; set; }
     }
 }

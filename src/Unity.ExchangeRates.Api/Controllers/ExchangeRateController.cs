@@ -1,4 +1,4 @@
-using AutoMapper;
+﻿using AutoMapper;
 using FluentResults;
 using Mediator;
 using Microsoft.AspNetCore.Mvc;
@@ -30,9 +30,10 @@ namespace Unity.ExchangeRates.Api.Controllers
         [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(void), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(void), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetRate(string currency, string date, [FromQuery] string appId = "")
+        public async Task<IActionResult> GetRate(string currency, string date)
         {
-            var request = new ExchangeRateRequest { appId = appId, currency = currency, date = date };
+            _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency, date);
+            var request = new ExchangeRateRequest { currency = currency, date = date };
             var query = _mapper.Map<ExchangeRateQuery>(request);
             var result = await _mediator.Send(query);
             return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
@@ -44,6 +45,7 @@ namespace Unity.ExchangeRates.Api.Controllers
         [ProducesResponseType(typeof(void), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> Sync([FromBody] ExchangeRateSyncRequest syncRequest)
         {
+            _logger.LogInformation("Sync request received: date={date}, session={session}", syncRequest.date, syncRequest.session);
             var command = _mapper.Map<ExchangeRateSyncCommand>(syncRequest);
             var result = await _mediator.Send(command);
             return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);

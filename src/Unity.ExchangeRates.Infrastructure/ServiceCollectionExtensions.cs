@@ -35,12 +35,9 @@ namespace Unity.ExchangeRates.Infrastructure
 
         private static IServiceCollection AddPersistence(this IServiceCollection services)
         {
-            // DB mode (switch back when ready for SQL Server):
-            // services.AddScoped<IExchangeRateRepository, ExchangeRateRepository>();
-
-            // Text file mode (stores data in Data/*.txt files):
-            services.AddScoped<IExchangeRateRepository, TextFileExchangeRateRepository>();
-
+            services.AddScoped<IExchangeRateRepository, ExchangeRateRepository>();
+            services.AddScoped<IUnitOfWork, UnitOfWork>();
+ 
             return services;
         }
     }

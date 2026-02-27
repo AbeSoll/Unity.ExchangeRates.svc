@@ -1,4 +1,4 @@
-using FluentResults;
+﻿using FluentResults;
 using FluentValidation;
 using Mediator;
 using Microsoft.Extensions.Logging;
@@ -30,12 +30,11 @@ namespace Unity.ExchangeRates.Service.Behaviors
             {
                 var errors = failures.Select(f => new ValidationError()
                 {
-                    appId = (string?)message?.GetType().GetProperty("appId")?.GetValue(message, null),
                     errorCode = f.ErrorCode,
                     errorMsg = f.ErrorMessage
                 });
 
-                _logger.LogError("Validation Error: {@errors}", errors);
+                _logger.LogWarning("Validation Error: {@errors}", errors);
                 return new TResponse().WithErrors(errors);
             }
 

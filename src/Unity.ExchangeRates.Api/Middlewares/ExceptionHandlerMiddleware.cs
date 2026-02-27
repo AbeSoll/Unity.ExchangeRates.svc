@@ -26,7 +26,6 @@ namespace Unity.ExchangeRates.Api.Middlewares
             }
             catch (Exception error)
             {
-                _logger.LogError(error, error.Message);
                 var response = context.Response;
                 response.ContentType = "application/json";
                 dynamic resultObject = new JObject();
@@ -35,15 +34,19 @@ namespace Unity.ExchangeRates.Api.Middlewares
                 switch (error)
                 {
                     case ExchangeRatesDomainException:
-                        // custom application error
+                        // custom application error — expected domain validation, not a real error
+                        _logger.LogWarning(error, "Domain exception: {Message}", error?.Message);
                         response.StatusCode = (int)HttpStatusCode.BadRequest;
                         break;
                     case ValidationException e:
+                        // user input validation failure — expected, not a real error
+                        _logger.LogWarning(error, "Validation exception: {Message}", error?.Message);
                         response.StatusCode = (int)HttpStatusCode.BadRequest;
                         resultObject.message = e.Errors.Select(e => e.ErrorMessage).Distinct().FirstOrDefault();
                         break;
                     default:
-                        // unhandled error
+                        // unhandled/unexpected error
+                        _logger.LogError(error, "Unhandled exception: {Message}", error?.Message);
                         response.StatusCode = (int)HttpStatusCode.InternalServerError;
                         break;
                 }

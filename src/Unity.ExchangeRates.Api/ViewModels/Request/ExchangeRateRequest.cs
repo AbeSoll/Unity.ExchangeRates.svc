@@ -5,7 +5,6 @@ namespace Unity.ExchangeRates.Api.ViewModels.Request
     [ValidateNever]
     public class ExchangeRateRequest
     {
-        public string appId { get; set; }
         public string currency { get; set; }
         public string date { get; set; }
     }

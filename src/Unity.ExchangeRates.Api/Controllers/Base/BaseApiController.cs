@@ -57,7 +57,6 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
             Response.StatusCode = statusCode;
             var resp = new BaseResponse()
             {
-                appId = String.Empty,
                 status = StandardFormat.FailedStatus,
                 timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
                 traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
@@ -74,7 +73,6 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
             Response.StatusCode = statusCode;
             var resp = new BaseResponse()
             {
-                appId = String.Empty,
                 status = StandardFormat.FailedStatus,
                 timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
                 traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,

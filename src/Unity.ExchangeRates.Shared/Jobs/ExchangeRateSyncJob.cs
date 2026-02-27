@@ -1,6 +1,5 @@
-using Mediator;
+﻿using Mediator;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
 using Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates;
 
 namespace Unity.ExchangeRates.Shared.Jobs
@@ -21,31 +20,23 @@ namespace Unity.ExchangeRates.Shared.Jobs
             try
             {
                 var now = DateTime.Now;
-                var targetDate = GetPreviousBusinessDate(now).ToString("yyyy-MM-dd");
+                var yesterday = now.Date.AddDays(-1).ToString("yyyy-MM-dd");
 
-                _logger.LogInformation("Hangfire SyncDaily: Starting sync. Now={Now}, TargetDate={TargetDate}", now, targetDate);
+                _logger.LogInformation("Hangfire SyncDaily: Starting sync. Now={Now}, TargetDate={TargetDate}", now, yesterday);
 
-                var command = new ExchangeRateSyncCommand { date = targetDate };
+                var command = new ExchangeRateSyncCommand { date = yesterday };
                 var result = await _mediator.Send(command, cancellationToken);
 
                 if (result.IsFailed)
                     _logger.LogError("Hangfire SyncDaily: Sync failed for {TargetDate}. Errors={Errors}",
-                        targetDate, string.Join("; ", result.Errors.Select(e => e.Message)));
+                        yesterday, string.Join("; ", result.Errors.Select(e => e.Message)));
                 else
-                    _logger.LogInformation("Hangfire SyncDaily: Sync succeeded for {TargetDate}.", targetDate);
+                    _logger.LogInformation("Hangfire SyncDaily: Sync succeeded for {TargetDate}.", yesterday);
             }
             catch (Exception ex)
             {
-                _logger.LogError("ExchangeRateSyncJob: " + JsonConvert.SerializeObject(ex));
+                _logger.LogCritical(ex, "Hangfire SyncDaily: Job crashed unexpectedly");
             }
-        }
-
-        private static DateTime GetPreviousBusinessDate(DateTime now)
-        {
-            var date = now.Date.AddDays(-1);
-            while (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
-                date = date.AddDays(-1);
-            return date;
         }
     }
 }
