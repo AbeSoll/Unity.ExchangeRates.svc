@@ -1,5 +1,9 @@
+﻿using AspNetCoreRateLimit;
+using Asp.Versioning;
+using Asp.Versioning.ApiExplorer;
 using Hangfire;
 using Mediator;
+using Microsoft.OpenApi.Models;
 using Serilog;
 using Unity.ExchangeRates.Infrastructure;
 using Unity.ExchangeRates.Service;
@@ -20,7 +24,7 @@ var builder = WebApplication.CreateBuilder(args);
 ConfigureLog(builder.Host);
 
 // ============================================================
-// Register all services — multi-layer pattern
+// Register all services - multi-layer pattern
 // ============================================================
 builder.Services.RegisterServiceModule(builder.Configuration);          // Service layer (Mediator, validators, BnmApiOptions)
 builder.Services.RegisterInfrastructureModule(builder.Configuration);   // Infrastructure (EF, repositories)
@@ -33,10 +37,17 @@ builder.Services.AddAutoMapper(typeof(Program).Assembly);
 // CORS
 ConfigureCors(builder.Environment, builder.Services, builder.Configuration);
 
-// Controllers + Swagger
+// Controllers
 builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
+// API Versioning
+ConfigureApiVersioning(builder.Services);
+
+// Rate Limiting
+ConfigureRateLimit(builder.Services, builder.Configuration);
+
+// Swagger
+ConfigureSwagger(builder.Services);
 
 // ============================================================
 // Build the application
@@ -44,16 +55,29 @@ builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionHandlerMiddleware>();
+app.UseMiddleware<ApiKeyAuthMiddleware>();
+app.UseIpRateLimiting();
 
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+
+    var apiVersionDescriptionProvider = app.Services.GetRequiredService<IApiVersionDescriptionProvider>();
+    app.UseSwaggerUI(options =>
+    {
+        foreach (var description in apiVersionDescriptionProvider.ApiVersionDescriptions.Reverse())
+        {
+            options.SwaggerEndpoint($"/swagger/{description.GroupName}/swagger.json",
+                description.GroupName.ToUpperInvariant());
+        }
+    });
+
     app.UseHangfireDashboard();
 }
 
 app.UseHttpsRedirection();
 app.UseCors();
+app.UseAuditLog();
 app.UseAuthorization();
 app.MapControllers();
 
@@ -81,6 +105,79 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+// ============================================================
+// API Versioning Configuration 
+// ============================================================
+static void ConfigureApiVersioning(IServiceCollection services)
+{
+    services.AddApiVersioning(options =>
+    {
+        options.AssumeDefaultVersionWhenUnspecified = true;
+        options.DefaultApiVersion = new ApiVersion(1, 0);
+        options.ReportApiVersions = true;
+        options.ApiVersionReader = new UrlSegmentApiVersionReader();
+    })
+    .AddApiExplorer(setup =>
+    {
+        setup.GroupNameFormat = "'v'VVV";
+        setup.SubstituteApiVersionInUrl = true;
+    });
+}
+
+// ============================================================
+// Swagger Configuration (versioned docs + API Key support)
+// ============================================================
+static void ConfigureSwagger(IServiceCollection services)
+{
+    services.AddEndpointsApiExplorer();
+
+    var serviceProvider = services.BuildServiceProvider();
+    var apiVersionDescriptionProvider = serviceProvider.GetRequiredService<IApiVersionDescriptionProvider>();
+
+    services.AddSwaggerGen(swagger =>
+    {
+        foreach (var description in apiVersionDescriptionProvider.ApiVersionDescriptions)
+        {
+            var apiInfo = new OpenApiInfo
+            {
+                Title = "Unity Exchange Rates API",
+                Version = $"{description.ApiVersion}"
+            };
+            if (description.IsDeprecated)
+            {
+                apiInfo.Description += " This API version has been deprecated.";
+            }
+            swagger.SwaggerDoc(description.GroupName, apiInfo);
+        }
+
+        // API Key header for Swagger UI "Authorize" button
+        swagger.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
+        {
+            Description = "API Key authentication using the X-Api-Key header",
+            Type = SecuritySchemeType.ApiKey,
+            Name = "X-Api-Key",
+            In = ParameterLocation.Header,
+            Scheme = "ApiKeyScheme"
+        });
+
+        swagger.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference
+                    {
+                        Type = ReferenceType.SecurityScheme,
+                        Id = "ApiKey"
+                    },
+                    In = ParameterLocation.Header
+                },
+                new List<string>()
+            }
+        });
+    });
 }
 
 // ============================================================
@@ -116,6 +213,18 @@ static void ConfigureCors(IWebHostEnvironment environment, IServiceCollection se
             });
         });
     }
+}
+
+// ============================================================
+// Rate Limiting Configuration 
+// ============================================================
+static void ConfigureRateLimit(IServiceCollection services, IConfiguration configuration)
+{
+    services.AddMemoryCache();
+    services.Configure<IpRateLimitOptions>(configuration.GetSection(nameof(IpRateLimitOptions)));
+    services.Configure<IpRateLimitPolicies>(configuration.GetSection(nameof(IpRateLimitPolicies)));
+    services.AddInMemoryRateLimiting();
+    services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 }
 
 // ============================================================

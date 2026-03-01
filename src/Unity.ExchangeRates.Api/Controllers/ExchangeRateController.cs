@@ -1,4 +1,5 @@
-﻿using AutoMapper;
+﻿using Asp.Versioning;
+using AutoMapper;
 using FluentResults;
 using Mediator;
 using Microsoft.AspNetCore.Mvc;
@@ -12,7 +13,8 @@ using Unity.ExchangeRates.Api.ViewModels.Response;
 namespace Unity.ExchangeRates.Api.Controllers
 {
     [ApiController]
-    [Route("api/exchangerates")]
+    [ApiVersion("1.0")]
+    [Route("api/v{version:apiVersion}/exchangerates")]
     public class ExchangeRateController : BaseApiController
     {
         private readonly IMapper _mapper;

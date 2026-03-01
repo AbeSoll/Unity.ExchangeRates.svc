@@ -1,5 +1,7 @@
+using Audit.Core.Providers;
 using FluentValidation;
 using Mediator;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System.Reflection;
@@ -15,6 +17,12 @@ namespace Unity.ExchangeRates.Service
             services
                 .AddService(configuration)
                 .AddAppSettings(configuration);
+
+            // Audit.NET file data provider
+            Audit.Core.Configuration.DataProvider = new FileDataProvider(cfg => cfg.Directory("audit-logs"));
+
+            // Required for AuditLogEventHandler to access HttpContext
+            services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
             return services;
         }

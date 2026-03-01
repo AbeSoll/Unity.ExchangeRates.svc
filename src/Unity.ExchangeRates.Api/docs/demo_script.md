@@ -14,6 +14,8 @@
 1. *An automated daily job that fetches rates at midnight*
 2. *A REST API that lets users query stored exchange rates by currency and date"*
 
+🗣️ *"And as part of production readiness, we have also implemented several layers of security and protection — API versioning, API key authentication, rate limiting, audit logging, and CORS control — which I'll walk through in detail."*
+
 💡 **Key point to emphasize:** This is a **fully automated** system. Once deployed, it runs itself. The API is just for users to retrieve the data that's already been synced.
 
 ---
@@ -28,12 +30,12 @@
 
 | Layer | Responsibility |
 |-------|---------------|
-| **Api** | The entry point — controllers, middleware, Swagger |
-| **Domain** | Our data models and entities — pure C# classes, no dependencies |
+| **Api** | The entry point — controllers, middleware, security config, Swagger |
+| **Domain** | Our data models, entities, and event contracts — pure C# classes |
 | **Repository** | Only interfaces — defines the contracts for data access |
-| **Infrastructure** | The concrete implementations — EF Core, database context, actual repository code |
-| **Service** | Business logic — CQRS handlers, validators, the core brain of the app |
-| **Shared** | Cross-cutting concerns — Hangfire jobs, HTTP client setup |
+| **Infrastructure** | The concrete implementations — EF Core, database context, repository code |
+| **Service** | Business logic — CQRS handlers, validators, audit event handlers |
+| **Shared** | Cross-cutting concerns — Hangfire jobs, HTTP client setup, event dispatchers |
 
 🗣️ *"The key design principle here is the direction of dependency. The inner layers like Domain and Repository have zero dependencies on outer layers. Infrastructure implements the Repository interfaces. Service contains the business logic. And Api ties everything together."*
 
@@ -41,17 +43,21 @@
 
 ---
 
-## PART 3 — Entry Point: Program.cs (3 min)
+## PART 3 — Entry Point: Program.cs (5 min)
 
-📂 **Open:** [Program.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Api/Program.cs)
+📂 **Open:** `Api/Program.cs`
 
-🗣️ *"Let me start from the entry point of the application — Program.cs. This is where everything gets wired up."*
+🗣️ *"Let me start from the entry point of the application — Program.cs. This is where everything gets wired up. There's quite a lot going on here now, so let me walk through section by section."*
 
-**Scroll to the top section (lines 1-10):**
+### Serilog (line 24)
+
+```csharp
+ConfigureLog(builder.Host);
+```
 
 🗣️ *"First, we configure Serilog for structured logging. This gives us proper log output with timestamps, log levels, and method names."*
 
-**Scroll to the service registration section (lines 24-30):**
+### Service Registration (lines 29-31)
 
 ```csharp
 builder.Services.RegisterServiceModule(builder.Configuration);
@@ -59,19 +65,116 @@ builder.Services.RegisterInfrastructureModule(builder.Configuration);
 builder.Services.RegisterSharedServiceModule(builder.Configuration);
 ```
 
-🗣️ *"Here's where the multi-layer pattern comes together. Each layer has its own registration method. The Service module registers the Mediator pipeline and validators. Infrastructure registers EF Core and repositories. Shared registers Hangfire and the HTTP client for BNM API."*
+🗣️ *"Here's where the multi-layer pattern comes together. Each layer has its own registration method:*
+- *Service module registers the Mediator pipeline, validators, BNM API settings, the Audit.NET file data provider, and `IHttpContextAccessor`*
+- *Infrastructure registers EF Core and repositories*
+- *Shared registers Hangfire jobs, the HTTP client for BNM API, and the Audit Log Event Dispatcher"*
 
-🗣️ *"We also register AutoMapper and Mediator here at the Api level because they need to be in the startup assembly."*
+### CORS Configuration (line 38)
 
-**Scroll to the middleware section (line 46):**
+```csharp
+ConfigureCors(builder.Environment, builder.Services, builder.Configuration);
+```
+
+🗣️ *"CORS — Cross-Origin Resource Sharing — is configured here. In development it allows any origin, but in production it reads specific allowed origins from appsettings. This prevents unauthorized websites from calling our API."*
+
+📂 **Scroll to bottom of file — show `ConfigureCors()` function**
+
+🗣️ *"The function reads `CorsOptions.Origins` from config. If it's not configured and we're NOT in Development, it throws an error — so we'll never accidentally deploy without CORS being locked down."*
+
+### API Versioning (line 44)
+
+```csharp
+ConfigureApiVersioning(builder.Services);
+```
+
+📂 **Scroll to `ConfigureApiVersioning()` function**
+
+```csharp
+static void ConfigureApiVersioning(IServiceCollection services)
+{
+    services.AddApiVersioning(options =>
+    {
+        options.AssumeDefaultVersionWhenUnspecified = true;
+        options.DefaultApiVersion = new ApiVersion(1, 0);
+        options.ReportApiVersions = true;
+        options.ApiVersionReader = new UrlSegmentApiVersionReader();
+    })
+    .AddApiExplorer(setup =>
+    {
+        setup.GroupNameFormat = "'v'VVV";
+        setup.SubstituteApiVersionInUrl = true;
+    });
+}
+```
+
+🗣️ *"We use URL segment versioning — so all our endpoints start with `/api/v1/`. This is the same approach Facility uses. We're using the `Asp.Versioning.Mvc` package version 8.1.0 which is the modern replacement for the older `Microsoft.AspNetCore.Mvc.Versioning` package."*
+
+🗣️ *"Key settings here:*
+- *`AssumeDefaultVersionWhenUnspecified = true` — so older clients still work*
+- *`DefaultApiVersion = 1.0` — our first version*
+- *`UrlSegmentApiVersionReader` — reads the version from the URL path*
+- *`SubstituteApiVersionInUrl = true` — replaces `{version}` in the route template"*
+
+### Rate Limiting (line 47)
+
+```csharp
+ConfigureRateLimit(builder.Services, builder.Configuration);
+```
+
+📂 **Scroll to `ConfigureRateLimit()` function**
+
+```csharp
+static void ConfigureRateLimit(IServiceCollection services, IConfiguration configuration)
+{
+    services.AddMemoryCache();
+    services.Configure<IpRateLimitOptions>(configuration.GetSection(nameof(IpRateLimitOptions)));
+    services.Configure<IpRateLimitPolicies>(configuration.GetSection(nameof(IpRateLimitPolicies)));
+    services.AddInMemoryRateLimiting();
+    services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+}
+```
+
+🗣️ *"Rate limiting protects our API from abuse — if someone sends too many requests, they get blocked. We use the `AspNetCoreRateLimit` package, same as Facility. The rules come from `IpRateLimitOptions` in appsettings."*
+
+📂 **Open:** `Api/appsettings.Development.json` — scroll to `IpRateLimitOptions`
+
+🗣️ *"Here you can see the config — currently set to 500 requests per second per IP. If exceeded, the client gets a 429 Too Many Requests response with a JSON message saying 'Quota exceeded'."*
+
+### Swagger Configuration (line 50)
+
+📂 **Scroll to `ConfigureSwagger()` function in Program.cs**
+
+🗣️ *"Swagger is configured to support both versioning and API key authentication. There are two important parts."*
+
+🗣️ *"First — it dynamically creates Swagger docs for each API version using `IApiVersionDescriptionProvider`. Right now we have just v1, but when we add v2, Swagger will automatically show both."*
+
+🗣️ *"Second — the security definition. We define an `ApiKey` security scheme that tells Swagger to show an 'Authorize' button. When you click it, you enter your X-Api-Key and all requests from Swagger will include that header."*
+
+### Middleware Pipeline (lines 57-59)
 
 ```csharp
 app.UseMiddleware<ExceptionHandlerMiddleware>();
+app.UseMiddleware<ApiKeyAuthMiddleware>();
+app.UseIpRateLimiting();
 ```
 
-🗣️ *"We have a custom exception handler middleware. This catches any unhandled exception across the entire application and returns a proper JSON error response instead of a 500 crash page."*
+🗣️ *"The middleware pipeline runs in order:*
+1. *First — exception handler catches any crash and returns a clean JSON response*
+2. *Second — API key middleware validates the `X-Api-Key` header*
+3. *Third — rate limiting checks if the IP has exceeded the request limit"*
 
-**Scroll to the Hangfire section (lines 60-64):**
+🗣️ *"If the API key is invalid, the request is rejected immediately — it never reaches the rate limiter or the controller."*
+
+### Audit Log Middleware (line 79)
+
+```csharp
+app.UseAuditLog();
+```
+
+🗣️ *"After CORS, we have the Audit Log middleware. This automatically captures every API request and response for audit trail purposes. I'll show the details in the Audit Logs section."*
+
+### Hangfire Job (lines 85-89)
 
 ```csharp
 RecurringJob.AddOrUpdate<IExchangeRateSyncJob>(
@@ -81,161 +184,260 @@ RecurringJob.AddOrUpdate<IExchangeRateSyncJob>(
     new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });
 ```
 
-🗣️ *"This is the Hangfire recurring job configuration. The cron expression `0 0 * * *` means it runs every day at midnight — 12:00 AM. The TimeZone is set to local so it follows our server time. This is what drives the automatic daily sync."*
-
-💡 **Key point:** *"This runs every single day — including weekends. We handle the weekend logic inside the business logic, which I'll show you shortly."*
+🗣️ *"This is the Hangfire recurring job. Cron expression `0 0 * * *` = every day at midnight. It runs every single day including weekends — the weekend logic is handled in the business layer."*
 
 ---
 
-## PART 4 — Domain Models (2 min)
+## PART 4 — API Key Authentication (3 min)
 
-📂 **Open:** [BaseEntity.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Domain/Models/BaseEntity.cs)
+📂 **Open:** `Api/Middlewares/ApiKeyAuthMiddleware.cs`
 
-🗣️ *"Let me quickly show the domain models. We have a BaseEntity that all our entities inherit from. It provides common fields like `Id`, `CreatedOn`, `CreatedBy`, `ModifiedOn`, `ModifiedBy`, and `IsDeleted` — standard audit fields."*
+🗣️ *"This is our API key security layer. Every request goes through this middleware before reaching any controller."*
 
-📂 **Open:** [Currency.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Domain/Models/Currency.cs)
+**Point to the class structure:**
+
+🗣️ *"The middleware is injected with three things:*
+- *`RequestDelegate` — to pass the request to the next middleware*
+- *`IConfiguration` — to read the valid API key from config*
+- *`ILogger` — to log any unauthorized attempts"*
+
+**Point to the `Invoke` method:**
+
+```csharp
+public async Task Invoke(HttpContext context)
+{
+    var path = context.Request.Path.Value?.ToLower() ?? string.Empty;
+
+    // Skip authentication for Swagger and Hangfire (dev tools)
+    if (path.StartsWith("/swagger") || path.StartsWith("/hangfire"))
+    {
+        await _next(context);
+        return;
+    }
+```
+
+🗣️ *"First, it checks the path. Swagger and Hangfire dashboard are excluded from authentication — these are development tools that need to be accessible without a key."*
+
+**Point to the key validation:**
+
+```csharp
+    if (!context.Request.Headers.TryGetValue(ApiKeyHeaderName, out var extractedApiKey))
+    {
+        _logger.LogWarning("API Key missing from request. Path={Path}, IP={IP}",
+            context.Request.Path, context.Connection.RemoteIpAddress);
+        await WriteUnauthorizedResponse(context, "API Key is required.");
+        return;
+    }
+
+    var configuredApiKey = _configuration["ApiSecurity:ApiKey"];
+    if (!string.Equals(extractedApiKey, configuredApiKey))
+    {
+        _logger.LogWarning("Invalid API Key provided. Path={Path}, IP={IP}",
+            context.Request.Path, context.Connection.RemoteIpAddress);
+        await WriteUnauthorizedResponse(context, "Invalid API Key.");
+        return;
+    }
+```
+
+🗣️ *"Then it checks for the `X-Api-Key` header. If missing — 401 Unauthorized. If the key doesn't match what's configured — 401 Unauthorized. Every unauthorized attempt is logged with the request path and the client's IP address — this is important for security monitoring."*
+
+**Point to `WriteUnauthorizedResponse`:**
+
+🗣️ *"The 401 response is returned as proper JSON — not just a status code. It has a status, error code, error message, and timestamp. This is consistent with our other error responses."*
+
+📂 **Open:** `Api/appsettings.Development.json` — point to `ApiSecurity` section
+
+```json
+"ApiSecurity": {
+    "ApiKey": "dev-unity-exchangerates-key-2026"
+}
+```
+
+🗣️ *"The API key is stored in appsettings for development. In production, this would come from the IDP (Identity Provider) or Azure Key Vault — not hardcoded in config files."*
+
+💡 **Key point:** *"This is Phase 1 security. When IDP registration is ready, we will add JWT token authentication as Phase 2 — the middleware architecture makes it easy to add more security layers."*
+
+---
+
+## PART 5 — Audit Logs (3 min)
+
+🗣️ *"Let me walk through how audit logging works. This follows the same pattern as Facility, using the Audit.NET library."*
+
+📂 **Open:** `Api/Configurations/AuditConfigurationBuilderExtensions.cs`
+
+```csharp
+builder.UseAuditMiddleware(_ => _
+    .FilterByRequest(rq => !rq.Path.Value.EndsWith("favicon.ico"))
+    .WithEventType("{verb}:{url}")
+    .IncludeHeaders()
+    .IncludeResponseHeaders()
+    .IncludeRequestBody()
+    .IncludeResponseBody(ctx => ctx.Response.StatusCode != 200));
+```
+
+🗣️ *"This configures the audit middleware to capture every HTTP request — the verb, URL, headers, request body, and response body (only for non-200 responses). It filters out favicon requests since those aren't relevant."*
+
+🗣️ *"The `EnableBuffering()` call at the bottom is important — it allows the request body to be read multiple times, once by the audit middleware and once by the controller."*
+
+📂 **Open:** `Domain/Events/IAuditLogEvent.cs`
+
+🗣️ *"The audit system follows the event-driven pattern:"*
+
+| File | Layer | Purpose |
+|------|-------|---------|
+| `Domain/Events/IEvent.cs` | Domain | Base event interface extending Mediator's `INotification` |
+| `Domain/Events/IAuditLogEvent.cs` | Domain | Audit event contract — EventType, ReferenceId, Message, Data |
+| `Domain/Events/AuditLogEvent.cs` | Domain | Concrete event class |
+| `Service/Services/IAuditLogEventDispatcher.cs` | Service | Dispatcher interface |
+| `Service/EventHandlers/AuditLogEventHandler.cs` | Service | Creates `AuditScope` with IP address and custom fields |
+| `Shared/Services/AuditLogEventDispatcher.cs` | Shared | Publishes events via Mediator |
+
+📂 **Open:** `Service/EventHandlers/AuditLogEventHandler.cs`
+
+```csharp
+using (var audit = await AuditScope.CreateAsync(notification.EventType, () => notification.Data))
+{
+    audit.SetCustomField("ReferenceId", notification.ReferenceId);
+    audit.SetCustomField("IpAddress", _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString());
+    audit.Comment(notification.Message);
+}
+```
+
+🗣️ *"When an audit event is dispatched, this handler creates an AuditScope — which writes to the file data provider. Each audit entry captures the event type, the data, a reference ID, and the client's IP address. The logs are written to the `audit-logs/` folder."*
+
+📂 **Open:** `Service/ServiceCollectionExtensions.cs` — point to Audit config
+
+```csharp
+Audit.Core.Configuration.DataProvider = new FileDataProvider(cfg => cfg.Directory("audit-logs"));
+services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+```
+
+🗣️ *"The data provider is configured to write audit logs as JSON files in the `audit-logs` directory. `IHttpContextAccessor` is registered so the handler can access the current HTTP request — specifically the client IP."*
+
+💡 **Key point:** *"This is the same pattern Facility uses. In production, we can switch from file-based to database-based audit logs by changing the data provider."*
+
+---
+
+## PART 6 — Domain Models (2 min)
+
+📂 **Open:** `Domain/Models/BaseEntity.cs`
+
+🗣️ *"Let me quickly show the domain models. We have a BaseEntity that all our entities inherit from. It provides common audit fields — `Id`, `CreatedOn`, `CreatedBy`, `ModifiedOn`, `ModifiedBy`, and `IsDeleted`."*
+
+📂 **Open:** `Domain/Models/Currency.cs`
 
 🗣️ *"The Currency model represents currencies we track — like USD, GBP, SGD. It has a `CurrencyCode` as the primary key, a `CurrencyName`, and `UnitBase`. These are pre-populated in the database."*
 
-📂 **Open:** [ExchangeRateHistory.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Domain/Models/ExchangeRateHistory.cs)
+📂 **Open:** `Domain/Models/ExchangeRateHistory.cs`
 
-🗣️ *"This is the main table — ExchangeRateHistory. Every time we sync from BNM, a new row goes here. It has:"*
-- *"`CurrencyCode` — which currency, like USD"*
-- *"`RateDate` — the actual BNM business date for the rate"*
-- *"`BuyingRate`, `SellingRate`, `MiddleRate` — the three rates BNM provides"*
-- *"`EffectiveDate` — when this rate is effective"*
-- *"And since it inherits BaseEntity, we also get `CreatedOn` — which is when our system fetched this data"*
+🗣️ *"This is the main table — ExchangeRateHistory. Every sync creates a row here with `CurrencyCode`, `RateDate`, `BuyingRate`, `SellingRate`, `MiddleRate`, and `EffectiveDate`."*
 
-💡 **Key point:** *"The difference between `RateDate` and `CreatedOn` is important. `RateDate` is BNM's date. `CreatedOn` is when we stored it. Users query by `CreatedOn` to get the rate available on a specific day."*
+💡 **Key point:** *"The difference between `RateDate` and `CreatedOn` is important. `RateDate` is BNM's date. `CreatedOn` is when we stored it. Users query by `CreatedOn`."*
 
 ---
 
-## PART 5 — The CQRS Pattern (2 min)
+## PART 7 — The CQRS Pattern (2 min)
 
 🗣️ *"Before I show the controllers, let me briefly explain the pattern we use — CQRS, which stands for Command Query Responsibility Segregation."*
 
-🗣️ *"The idea is simple — we separate read operations from write operations:"*
-- *"**Queries** = reading data from the database (GET endpoint)"*
-- *"**Commands** = writing data / triggering actions (POST sync endpoint)"*
+🗣️ *"The idea is simple — we separate read operations from write operations:*
+- *Queries = reading data (GET endpoint)*
+- *Commands = writing data / triggering actions (POST sync endpoint)"*
 
-🗣️ *"We use the Mediator library to implement this. The controller doesn't call the database directly. Instead, it creates a query or command object and sends it through the Mediator. The Mediator finds the right handler and executes it."*
-
-🗣️ *"Why is this good? Because each handler is a small, focused class that does one thing. It's easy to test, easy to debug, and easy to add new features without touching existing code."*
+🗣️ *"We use the Mediator library to implement this. The controller creates a query or command and sends it through Mediator. The Mediator finds the right handler and executes it. Each handler is a small, focused class that does one thing."*
 
 ---
 
-## PART 6 — Controller (3 min)
+## PART 8 — Controller (3 min)
 
-📂 **Open:** [ExchangeRateController.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Api/Controllers/ExchangeRateController.cs)
+📂 **Open:** `Api/Controllers/ExchangeRateController.cs`
 
-🗣️ *"Here's our controller — it's intentionally thin. It has two endpoints."*
+🗣️ *"Here's our controller — it's intentionally thin. Notice the important attributes at the top."*
 
-**Point to the constructor (lines 19-24):**
+**Point to the class attributes:**
 
-🗣️ *"The controller gets three dependencies injected — AutoMapper for mapping objects, Mediator for sending commands and queries, and a logger."*
+```csharp
+[ApiController]
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/exchangerates")]
+```
 
-**Point to GetRate method (lines 26-34):**
+🗣️ *"Three attributes:*
+- *`ApiController` — enables automatic model validation and binding*
+- *`ApiVersion("1.0")` — this controller belongs to API version 1.0*
+- *The route includes `v{version:apiVersion}` — so the actual URL becomes `/api/v1/exchangerates`"*
+
+**Point to the constructor:**
+
+🗣️ *"The controller gets three dependencies injected — AutoMapper for mapping objects, Mediator for sending commands and queries, and a logger that we actively use for request logging."*
+
+**Point to GetRate method:**
 
 ```csharp
 [HttpGet("{currency}/{date}")]
 public async Task<IActionResult> GetRate(string currency, string date)
+{
+    _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency, date);
 ```
 
-🗣️ *"The GET endpoint takes a currency code and date from the URL. For example: `/api/exchangerates/usd/2026-02-26`. It maps the input to a Query object, sends it through Mediator, and returns the result."*
+🗣️ *"The GET endpoint takes currency and date from the URL. Notice we log every incoming request — this is important for monitoring and debugging. Then it maps the input to a Query, sends through Mediator, returns the result."*
 
-**Point to Sync method (lines 36-44):**
+**Point to Sync method:**
 
 ```csharp
 [HttpPost("sync")]
 public async Task<IActionResult> Sync([FromBody] ExchangeRateSyncRequest syncRequest)
+{
+    _logger.LogInformation("Sync request received: date={date}, session={session}", syncRequest.date, syncRequest.session);
 ```
 
-🗣️ *"The POST endpoint is for manual sync. It takes a JSON body with `date` and optionally `session`. It maps to a Command object and sends it through Mediator."*
-
-🗣️ *"Notice how both methods follow the same pattern — map the request, send through Mediator, return the response. The controller doesn't contain any business logic at all. It's just a bridge between HTTP and our business layer."*
+🗣️ *"Same pattern for POST — log the request, map to Command, send through Mediator. The controller has zero business logic — it's just a bridge between HTTP and our service layer."*
 
 ---
 
-## PART 7 — AutoMapper Profiles (1 min)
+## PART 9 — AutoMapper Profiles (1 min)
 
-📂 **Open:** [InitialMapper.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Api/Configurations/InitialMapper.cs)
+📂 **Open:** `Api/Configurations/InitialMapper.cs`
 
-🗣️ *"AutoMapper handles the mapping between different object types. We have three mappings:"*
+🗣️ *"AutoMapper handles the mapping between request/response objects. Three mappings with matching property names — AutoMapper does the rest automatically."*
+
+---
+
+## PART 10 — Validation Pipeline (2 min)
+
+📂 **Open:** `Service/Behaviors/RequestValidationBehavior.cs`
+
+🗣️ *"Before any command or query reaches its handler, it goes through our validation pipeline. This is a Mediator pipeline behavior — like middleware for Mediator. If validation fails, it short-circuits and returns an error."*
+
+📂 **Open:** `Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandValidator.cs`
+
+🗣️ *"Here's a concrete validator — date must be in `yyyy-MM-dd` format, and session must be one of: 0900, 1130, 1200, or 1700."*
+
+---
+
+## PART 11 — Query Handler (GET flow) (3 min)
+
+📂 **Open:** `Service/Mediator/Queries/ExchangeRates/ExchangeRateQueryHandler.cs`
+
+🗣️ *"This handles what happens when a user queries for a rate. It parses the date, calls the repository to find the rate by `CreatedOn.Date`, and returns the result. If no rate is found, it returns 404 with a clear message."*
+
+💡 **Key point:** *"Users query with today's date. Today's data was synced at midnight, so it should always be available."*
+
+---
+
+## PART 12 — Command Handler (POST / Sync flow) — core business logic (5 min)
+
+📂 **Open:** `Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandHandler.cs`
+
+🗣️ *"This is the heart of the application. Let me walk through it step by step."*
+
+**Point to date resolution:**
 
 ```csharp
-CreateMap<ExchangeRateRequest, ExchangeRateQuery>();       // GET → Query
-CreateMap<ExchangeRateSyncRequest, ExchangeRateSyncCommand>(); // POST → Command
-CreateMap<BaseResult, BaseResponse>();                     // Result → Response
-```
-
-🗣️ *"Since the property names match between source and destination, AutoMapper automatically maps them. This keeps our controller code clean."*
-
----
-
-## PART 8 — Validation Pipeline (2 min)
-
-📂 **Open:** [RequestValidationBehavior.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Service/Behaviors/RequestValidationBehavior.cs)
-
-🗣️ *"Before any command or query reaches its handler, it goes through our validation pipeline. This is a Mediator pipeline behavior — think of it like middleware, but for Mediator."*
-
-🗣️ *"What happens here is: when a request comes in, this behavior collects all the validators registered for that request type, runs them, and if any fail, it short-circuits the pipeline and returns a validation error. The request never reaches the handler."*
-
-📂 **Open:** [ExchangeRateSyncCommandValidator.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandValidator.cs)
-
-🗣️ *"Here's a concrete validator for the Sync command. It validates two things:"*
-1. *"`date` must not be empty and must be in `yyyy-MM-dd` format"*
-2. *"`session` — if provided — must be one of the valid BNM sessions: 0900, 1130, 1200, or 1700"*
-
-🗣️ *"If someone sends an invalid date format or an invalid session through Swagger, they'll get a clear 400 Bad Request with a specific error message."*
-
----
-
-## PART 9 — Query Handler (GET flow) (3 min)
-
-📂 **Open:** [ExchangeRateQueryHandler.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Service/Mediator/Queries/ExchangeRates/ExchangeRateQueryHandler.cs)
-
-🗣️ *"Now let's trace the GET flow — what happens when a user wants to retrieve an exchange rate."*
-
-🗣️ *"This handler receives the query with `currency` and `date`. Here's the flow:"*
-
-**Point to lines 28-33:**
-
-🗣️ *"First, it logs the incoming query at Debug level — this is for development troubleshooting."*
-
-🗣️ *"Then it parses the date string into a DateTime and calls the repository to find the rate. Notice we're querying by `CreatedOn.Date` — meaning we find the rate that was stored on the date the user specified."*
-
-**Point to lines 35-45:**
-
-🗣️ *"If no rate is found — maybe the sync didn't run or failed for that date — we return a 404 Not Found with a clear error message. This is logged at Warning level because it's unexpected but not an error."*
-
-🗣️ *"If the rate is found, we log success at Information level and return the data."*
-
-**Point to the catch block (lines 53-56):**
-
-🗣️ *"If anything unexpected crashes — like a database connection timeout — the catch block logs it as Error and returns a 500 with the error message."*
-
-💡 **Key point:** *"In practice, users will query with today's date. Today's data was synced at midnight, so it should always be available. If it's not, the Warning log tells us something went wrong with the Hangfire job."*
-
----
-
-## PART 10 — Command Handler (POST / Sync flow) — the core business logic (5 min)
-
-📂 **Open:** [ExchangeRateSyncCommandHandler.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandHandler.cs)
-
-🗣️ *"This is the heart of the application — where the main business logic lives. Let me walk through it step by step."*
-
-**Point to lines 37-41 (date parsing + resolve):**
-
-```csharp
-var inputDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", ...);
 var targetDate = ResolveBusinessDate(inputDate);
-var targetDateStr = targetDate.ToString("yyyy-MM-dd");
-var session = !string.IsNullOrEmpty(request.session) ? request.session : _settings.DefaultSession;
 ```
 
-🗣️ *"Step 1 — we parse the input date and then run it through `ResolveBusinessDate()`. This is a critical function."*
-
-**Scroll down to ResolveBusinessDate (bottom of file):**
+📂 **Scroll to `ResolveBusinessDate`:**
 
 ```csharp
 private static DateTime ResolveBusinessDate(DateTime date)
@@ -246,213 +448,139 @@ private static DateTime ResolveBusinessDate(DateTime date)
 }
 ```
 
-🗣️ *"BNM doesn't publish rates on weekends. So if the input date falls on Saturday or Sunday, we keep subtracting one day until we reach Friday. For example:"*
-- *"Saturday → resolves to Friday"*
-- *"Sunday → also resolves to Friday"*
+🗣️ *"BNM doesn't publish on weekends, so Saturday/Sunday resolve to Friday. Monday also gets Friday's rate because the Hangfire job sends yesterday's date (Sunday) which resolves to Friday."*
 
-🗣️ *"This means on weekends and on Monday (because Hangfire sends yesterday's date which is Sunday), we always fetch Friday's rate. This is by requirement — the system must have a rate for every single day."*
+**Point to the loop:**
 
-**Scroll back up, point to the session line:**
-
-🗣️ *"For the session, developers can choose which BNM session to use — 0900, 1130, 1200, or 1700. If not specified, it defaults to 1700 from our appsettings config. The daily automated job always uses 1700 because we want the end-of-day rate."*
-
-**Point to lines 48-51 (load currencies + begin transaction):**
-
-🗣️ *"Next, we load all active currencies from the database — these are the currencies we're tracking. Then we begin a database transaction. This is important because we want all-or-nothing — either all currencies sync successfully, or we rollback."*
-
-**Point to the foreach loop (lines 53-97):**
-
-🗣️ *"Then we loop through each currency and for each one:"*
-
-1. *"Build the BNM API URL with the currency, date, session, and quote=rm"*
-2. *"Call the BNM API"*
-3. *"If the API returns an error (like 404 for a specific currency), we log it and skip to the next currency — we don't fail the whole batch"*
-4. *"If successful, we deserialize the BNM response into our `BnmApiResponse` model"*
-5. *"Create an `ExchangeRateHistory` entity with the rates — BuyingRate, SellingRate, MiddleRate"*
-6. *"Add it to the database context"*
-
-**Point to lines 98-102 (save + commit):**
-
-🗣️ *"After all currencies are processed, we save everything to the database and commit the transaction. We log how many currencies were synced out of the total."*
-
-**Point to the catch block (lines 104-109):**
-
-🗣️ *"If anything goes wrong during the entire process — maybe the database is down — the catch block rolls back the transaction so we don't end up with partial data. The error is logged and returned."*
-
-💡 **Key point to emphasize:** *"The transaction + rollback pattern ensures data integrity. We never have a situation where only some currencies are synced and others aren't."*
+🗣️ *"For each currency: build the BNM API URL → call the API → if error, log and skip → if success, create an ExchangeRateHistory entity → add to database context. All wrapped in a transaction — if anything fails, everything rolls back."*
 
 ---
 
-## PART 11 — Hangfire Job (2 min)
+## PART 13 — Hangfire Job (2 min)
 
-📂 **Open:** [ExchangeRateSyncJob.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Shared/Jobs/ExchangeRateSyncJob.cs)
+📂 **Open:** `Shared/Jobs/ExchangeRateSyncJob.cs`
 
-🗣️ *"This is the Hangfire job that gets triggered every day at midnight. It's quite simple."*
+🗣️ *"The Hangfire job runs at midnight — takes yesterday's date and sends it through Mediator."*
 
-```csharp
-var now = DateTime.Now;
-var yesterday = now.Date.AddDays(-1).ToString("yyyy-MM-dd");
-var command = new ExchangeRateSyncCommand { date = yesterday };
-var result = await _mediator.Send(command, cancellationToken);
-```
-
-🗣️ *"The job calculates yesterday's date, creates a sync command with that date, and sends it through Mediator. The same command handler we just looked at processes it."*
-
-🗣️ *"Why yesterday? Because the job runs at midnight — 12 AM. At that point, BNM has already published the 5 PM rate for the previous day. So we're taking yesterday's 1700 session rate."*
-
-🗣️ *"Let me trace through the whole week to show how this works:"*
-
-| Job runs at | Yesterday (-1 day) | ResolveBusinessDate | BNM rate fetched | User queries |
-|---|---|---|---|---|
-| **Tuesday 12AM** | Monday | Monday ✅ | Monday 1700 | Tuesday's date |
-| **Wednesday 12AM** | Tuesday | Tuesday ✅ | Tuesday 1700 | Wednesday's date |
-| **Saturday 12AM** | Friday | Friday ✅ | Friday 1700 | Saturday's date |
-| **Sunday 12AM** | Saturday → resolves to | **Friday** | Friday 1700 | Sunday's date |
-| **Monday 12AM** | Sunday → resolves to | **Friday** | Friday 1700 | Monday's date |
-| **Tuesday 12AM** | Monday | Monday ✅ | Monday 1700 | Tuesday's date |
-
-🗣️ *"So Saturday, Sunday, and Monday all get Friday's rate — which is expected because BNM doesn't publish on weekends. Each day still gets its own row in the database for traceability."*
-
-💡 **If asked about duplicate rates:** *"Yes, Friday's rate appears in 3 rows (Saturday, Sunday, Monday). This is by design and by requirement. The system needs to run every day, and each day's sync creates its own record. Life Asia always gets a rate regardless of the day."*
+| Job runs at | Yesterday (-1 day) | ResolveBusinessDate | Rate fetched |
+|---|---|---|---|
+| **Tuesday 12AM** | Monday | Monday ✅ | Monday 1700 |
+| **Saturday 12AM** | Friday | Friday ✅ | Friday 1700 |
+| **Sunday 12AM** | Saturday → | **Friday** | Friday 1700 |
+| **Monday 12AM** | Sunday → | **Friday** | Friday 1700 |
 
 ---
 
-## PART 12 — Repository & Database Layer (3 min)
+## PART 14 — Repository & Database Layer (3 min)
 
-📂 **Open:** [IExchangeRateRepository.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Repository/IExchangeRateRepository.cs)
+📂 **Open:** `Repository/IExchangeRateRepository.cs` → then `Infrastructure/Repositories/ExchangeRateRepository.cs`
 
-🗣️ *"The repository layer defines three operations as interfaces:"*
-1. *"`GetActiveCurrenciesAsync` — fetches all currencies we track"*
-2. *"`GetRateByCreatedDateAsync` — finds a rate by currency code and the date it was created in our system"*
-3. *"`AddRateHistoryAsync` — inserts a new rate record"*
+🗣️ *"Repository defines three interface operations. Infrastructure provides the EF Core implementation."*
 
-📂 **Open:** [ExchangeRateRepository.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Infrastructure/Repositories/ExchangeRateRepository.cs)
+📂 **Open:** `Infrastructure/UnitOfWork.cs`
 
-🗣️ *"And here's the concrete implementation using Entity Framework. For example, `GetRateByCreatedDateAsync` queries the ExchangeRateHistory table matching on CurrencyCode and where `CreatedOn.Date` equals the requested date."*
+🗣️ *"Unit of Work wraps the repository with transaction management — BeginTransaction, Commit, Rollback."*
 
-📂 **Open:** [UnitOfWork.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Infrastructure/UnitOfWork.cs)
+📂 **Open:** `Infrastructure/Interceptors/EntitySaveChangeInterceptor.cs`
 
-🗣️ *"We also use the Unit of Work pattern. This wraps the repository and database context together, providing transaction management — `BeginTransaction`, `Commit`, and `Rollback`. This is what the command handler uses to ensure data integrity."*
-
-📂 **Open:** [AppDbContext.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Infrastructure/Data/AppDbContext.cs)
-
-🗣️ *"The DbContext defines our two tables — `Currencies` and `ExchangeRateHistories` — and configures the column types and relationships using Fluent API."*
-
-📂 **Open:** [EntitySaveChangeInterceptor.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Infrastructure/Interceptors/EntitySaveChangeInterceptor.cs)
-
-🗣️ *"We also have a SaveChanges interceptor. Every time EF saves data, this interceptor automatically sets `CreatedOn` for new records and `ModifiedOn` for updated records. This ensures audit fields are always populated without developers having to remember to set them manually."*
+🗣️ *"The SaveChanges interceptor automatically sets `CreatedOn` and `ModifiedOn` — so developers never forget to populate audit fields."*
 
 ---
 
-## PART 13 — HTTP Client & Resilience (2 min)
+## PART 15 — HTTP Client & Resilience (2 min)
 
-📂 **Open:** [ServiceCollectionExtensions.cs (Shared)](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Shared/ServiceCollectionExtensions.cs)
+📂 **Open:** `Shared/ServiceCollectionExtensions.cs`
 
-🗣️ *"The BNM API client is configured using the HTTP client factory pattern. Let me highlight a few things."*
+🗣️ *"BNM API client uses HTTP client factory pattern with Polly retry policy — 3 retries with increasing delays (1s, 2s, 5s). This handles transient BNM API failures gracefully."*
 
-**Point to the HttpClient setup:**
-
-🗣️ *"The base URL and Accept header come from appsettings — `BnmApiSettings` section. The timeout is set to 10 seconds per request."*
-
-**Point to BuildRetryPolicy:**
-
-```csharp
-.AddPolicyHandler(BuildRetryPolicy());
-```
-
-🗣️ *"We use Polly for resilience. If the BNM API call fails due to a transient error — like a network timeout or a 503 — it will automatically retry 3 times with increasing delays: 1 second, then 2 seconds, then 5 seconds. This makes our system resilient to temporary BNM API issues."*
+🗣️ *"Also notice the `AuditLogEventDispatcher` is registered here as scoped — it connects the audit event system to Mediator."*
 
 ---
 
-## PART 14 — Middleware & Error Handling (2 min)
+## PART 16 — Middleware & Error Handling (2 min)
 
-📂 **Open:** [ExceptionHandlerMiddleware.cs](file:///c:/Users/soleh/source/repos/Unity.ExchangeRates.svc/src/Unity.ExchangeRates.Api/Middlewares/ExceptionHandlerMiddleware.cs)
+📂 **Open:** `Api/Middlewares/ExceptionHandlerMiddleware.cs`
 
-🗣️ *"Our global exception middleware catches any exception that wasn't handled by the application logic. It categorizes them:"*
+🗣️ *"Our global exception middleware categorizes errors:*
+- *Domain exceptions → 400, logged as Warning*
+- *Validation exceptions → 400, logged as Warning*
+- *Everything else → 500, logged as Error*
 
-- *"**Domain exceptions** (like business rule violations) → 400 Bad Request, logged as Warning since it's expected"*
-- *"**Validation exceptions** → 400 Bad Request, logged as Warning"*
-- *"**Everything else** (unexpected crashes) → 500 Internal Server Error, logged as Error"*
-
-🗣️ *"This ensures the API always returns a proper JSON response, never an ugly stack trace, regardless of what goes wrong."*
+*Always returns proper JSON — never an ugly stack trace."*
 
 ---
 
-## PART 15 — Logging Strategy (2 min)
-
-🗣️ *"Let me briefly explain our logging strategy. We use Serilog with structured logging across the entire application. Each log level has a specific purpose:"*
+## PART 17 — Logging Strategy (2 min)
 
 | Level | When we use it | Example |
 |-------|---------------|---------|
-| **Debug** | Internal operations, dev-only detail | *"Repository: GetActiveCurrenciesAsync called"* |
-| **Information** | Key business flow milestones | *"Sync completed. Synced 8/8 currencies"* |
-| **Warning** | Unexpected but recoverable situations | *"No rate found for USD on 2026-02-26"*, *"Transaction rolled back"* |
-| **Error** | Operation failures that need attention | *"BNM API returned 404 for JPY"* |
-| **Critical** | System-level crashes | *"Hangfire job crashed unexpectedly"* |
+| **Debug** | Internal ops, dev detail | *"Repository: GetActiveCurrenciesAsync called"* |
+| **Information** | Business milestones | *"Sync completed. Synced 8/8 currencies"* |
+| **Warning** | Recoverable issues + **unauthorized API access** | *"API Key missing, IP=192.168.1.1"* |
+| **Error** | Operation failures | *"BNM API returned 404 for JPY"* |
+| **Critical** | System crashes | *"Hangfire job crashed unexpectedly"* |
 
-🗣️ *"Every handler, repository, and middleware follows this convention. In production, we can set the minimum log level to Information to reduce noise, and switch to Debug only when troubleshooting."*
+🗣️ *"Notice that the API Key middleware logs unauthorized attempts at Warning level — so in production we can monitor for suspicious access patterns."*
 
 ---
 
-## PART 16 — LIVE DEMO (5 min)
+## PART 18 — LIVE DEMO (5 min)
 
-### Demo 1: Swagger
+### Demo 1: Swagger — Versioned API + Security
 
-🗣️ *"Now let me show you the API running. This is the Swagger UI."*
+🗣️ *"Let me show you the API running."*
 
-1. **Show GET endpoint** — expand `/api/exchangerates/{currency}/{date}`
-2. Enter `usd` and today's date `2026-02-26`
-3. Click Execute
-4. Show the JSON response with BuyingRate, SellingRate, MiddleRate
-
-🗣️ *"The user fills in today's date and gets the rate that was automatically synced at midnight. The rate itself is from yesterday at 5PM session."*
+1. **Open Swagger** — point out the dropdown showing **V1**
+2. **Show endpoints** — both now under `/api/v1/exchangerates/...`
+3. **Click 🔒 Authorize** button → show the ApiKey security scheme
+4. **Try WITHOUT key** — GET `/api/v1/exchangerates/usd/2026-02-27` → show **401 Unauthorized** JSON response
+5. **Enter key** `dev-unity-exchangerates-key-2026` → Authorize → Close
+6. **Try WITH key** — same GET → show **200 OK** with exchange rate data
 
 ### Demo 2: POST sync (manual)
 
-1. **Show POST endpoint** — expand `/api/exchangerates/sync`
-2. Enter body:
+1. POST body:
 ```json
 {
   "date": "2026-02-25",
   "session": "1700"
 }
 ```
-3. Click Execute
-4. Show response: *"Synced 8 of 8 currencies for 2026-02-25 (session=1700)"*
-
-🗣️ *"This POST endpoint is mainly for developers. Say the midnight job failed, or we need to backfill historical data — we can manually trigger a sync for any date and session."*
+2. Show response: *"Synced 8 of 8 currencies"*
 
 ### Demo 3: Hangfire Dashboard
 
-1. Open Hangfire dashboard (usually at `/hangfire`)
-2. Show **Recurring Jobs** tab — point to `daily-exchange-rate-sync` with cron `0 0 * * *`
-3. Show **Succeeded** tab — recent job executions
-
-🗣️ *"Here's the Hangfire dashboard. We can see our daily job scheduled to run at midnight. The Succeeded tab shows that it's been running successfully every day."*
+1. Open `/hangfire` — show `daily-exchange-rate-sync` recurring job
+2. Show recent Succeeded jobs
 
 ### Demo 4: Database
 
-1. Open SQL Server Management Studio or your DB tool
-2. Show **Currency** table — list of currencies being tracked
-3. Show **ExchangeRateHistory** table — recent rows
-4. Point out: different `CreatedOn` dates but same `RateDate` for weekend records
+1. Show **Currency** table — currencies being tracked
+2. Show **ExchangeRateHistory** — weekend rows with same `RateDate` but different `CreatedOn`
 
-🗣️ *"In the database, you can see the Currency table has our tracked currencies, and ExchangeRateHistory has all the synced rates. Notice these 3 rows — Saturday, Sunday, and Monday — all have the same RateDate of Friday, but different CreatedOn dates. That's the weekend logic working as expected."*
+### Demo 5: Audit Logs
+
+1. Open `audit-logs/` folder after making a request
+2. Show the JSON audit file — contains request headers, URL, method, response status
 
 ---
 
-## PART 17 — Summary & Close (1 min)
+## PART 19 — Summary & Close (1 min)
 
-🗣️ *"So to wrap up — the Unity Exchange Rates API is:"*
+🗣️ *"So to wrap up — the Unity Exchange Rates API has:"*
 
 1. ✅ *"**Fully automated** — Hangfire syncs rates daily at midnight"*
-2. ✅ *"**Resilient** — retry policy for BNM API, transaction rollback for data integrity"*
-3. ✅ *"**Clean architecture** — 6 layers with clear separation of concerns"*
-4. ✅ *"**CQRS pattern** — commands and queries are separated with proper validation"*
-5. ✅ *"**Structured logging** — proper log levels for monitoring and debugging"*
-6. ✅ *"**Weekend-aware** — automatically resolves to Friday's rate"*
-7. ✅ *"**Configurable** — session, BNM API settings all driven by appsettings"*
-8. ✅ *"**Ready for Life Asia** — data available every day, queryable by currency and date"*
+2. ✅ *"**Secured** — API key authentication on every request"*
+3. ✅ *"**Versioned** — URL segment versioning (`/api/v1/`)"*
+4. ✅ *"**Rate limited** — 500 req/s per IP, 429 if exceeded"*
+5. ✅ *"**Audited** — every request/response captured for audit trail"*
+6. ✅ *"**CORS controlled** — config-driven allowed origins"*
+7. ✅ *"**Resilient** — retry policy for BNM API, transaction rollback"*
+8. ✅ *"**Clean architecture** — 6 layers with clear separation"*
+9. ✅ *"**CQRS pattern** — commands and queries separated with validation"*
+10. ✅ *"**Structured logging** — proper log levels for monitoring"*
+11. ✅ *"**Weekend-aware** — automatically resolves to Friday's rate"*
+12. ✅ *"**Production-ready** — for Life Asia deployment"*
 
 🗣️ *"Any questions?"*
 
@@ -463,8 +591,12 @@ var result = await _mediator.Send(command, cancellationToken);
 | Potential question | Answer |
 |---|---|
 | **Why not call BNM API in real-time when user queries?** | Performance and reliability. We cache in our DB so queries are instant. If BNM is down, our data is still available. |
-| **What if the job fails?** | We have the POST endpoint for manual re-sync. Logs will show us exactly what failed. |
+| **What if the job fails?** | We have the POST endpoint for manual re-sync. Logs will show exactly what failed. |
 | **Why duplicate data on weekends?** | Requirement — each day needs a record. Life Asia expects a rate for every date. |
+| **Why API key and not JWT?** | Phase 1 — API key gives us immediate protection. JWT will be added when IDP registration is ready. The middleware architecture makes it easy to layer both. |
+| **How is the API key stored in production?** | Via IDP (Identity Provider) or Azure Key Vault — not hardcoded in config files. |
+| **What happens if rate limit is exceeded?** | Client gets 429 Too Many Requests with a JSON message. Currently set to 500/sec per IP. |
+| **How is audit logging stored?** | File-based for now (same as Facility). Can switch to database-based by changing the data provider. |
 | **Why CQRS and not just simple services?** | Separation of concerns, easier to test, each handler is focused. Also aligns with Facility's architecture. |
-| **What if BNM adds a new currency?** | We add it to the Currency table. Next sync will automatically include it. |
-| **Why session is configurable?** | Different sessions give different rates (morning vs end-of-day). Developers can test with different sessions. |
+| **What about CORS in production?** | `CorsOptions.Origins` in appsettings is replaced by CI/CD pipeline with actual allowed domains. |
+| **What NuGet packages were added for security?** | `Asp.Versioning.Mvc` 8.1.0, `AspNetCoreRateLimit` 5.0.0, `Audit.NET` 21.0.0, `Audit.WebApi.Core` 21.0.0 — all same or similar to what Facility uses. |
