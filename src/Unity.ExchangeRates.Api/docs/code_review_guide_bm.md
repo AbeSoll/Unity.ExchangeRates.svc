@@ -1,291 +1,415 @@
-# Unity Exchange Rates API — Panduan Review Code (BM Detail)
+# 📘 Unity Exchange Rates API — Complete Notebook Guide
 
-> Dokumen ini explain setiap class yang terlibat dalam projek, **mengapa** kita guna setiap pattern/method, **kelebihan** dia, dan **line-by-line** code explanation. Disusun mengikut flow terbaik untuk code review presentation.
-
----
-
-## DAFTAR KANDUNGAN
-
-1. [Program.cs — Entry Point & Semua Configuration](#1-programcs)
-2. [ExceptionHandlerMiddleware — Global Error Handling](#2-exceptionhandlermiddleware)
-3. [ApiKeyAuthMiddleware — API Key Security](#3-apikeyauthmiddleware)
-4. [ExchangeRateController — API Endpoints](#4-exchangeratecontroller)
-5. [RequestValidationBehavior — Validation Pipeline](#5-requestvalidationbehavior)
-6. [ExchangeRateSyncCommandValidator — Session Config Validation](#6-exchangeratesynccommandvalidator)
-7. [ExchangeRateSyncCommandHandler — Core Business Logic](#7-exchangeratesynccommandhandler)
-8. [ExchangeRateQueryHandler — Query Logic](#8-exchangeratequeryhandler)
-9. [UnitOfWork — Transaction Management](#9-unitofwork)
-10. [ExchangeRateRepository — Data Access](#10-exchangeraterepository)
-11. [EntitySaveChangeInterceptor — Auto Audit Fields](#11-entitysavechangeinterceptor)
-12. [ExchangeRateSyncJob — Hangfire Job](#12-exchangeratesyncjob)
-13. [AuditConfigurationBuilderExtensions — Audit Logging](#13-auditconfigurationbuilderextensions)
-14. [Audit Events (Domain → Service → Shared)](#14-audit-events)
-15. [LogMethodNameEnricher — Custom Serilog Enricher](#15-logmethodnameenricher)
-16. [ServiceCollectionExtensions — DI Registration](#16-servicecollectionextensions)
+> Notebook rujukan lengkap untuk memahami setiap feature dan implementation dalam projek ini.
+> Disusun mengikut **topik/feature** — bukan mengikut file.
+> Setiap topik ada: **Apa**, **Kenapa**, **Macam Mana**, **Kelebihan**, dan **Code Explain**.
 
 ---
 
-## 1. Program.cs
+## 📑 Daftar Kandungan
 
-📂 **Path:** `src/Unity.ExchangeRates.Api/Program.cs` — 241 baris
+| # | Topik | Muka |
+|---|-------|------|
+| 1 | [Layered Architecture](#1--layered-architecture) | Struktur projek 6 layer |
+| 2 | [CQRS Pattern (Mediator)](#2--cqrs-pattern-mediator) | Command Query Responsibility Segregation |
+| 3 | [Structured Logging (Serilog)](#3--structured-logging-serilog) | Log levels, enricher, config |
+| 4 | [Security — API Key Authentication](#4--security--api-key-authentication) | Middleware, header validation |
+| 5 | [API Versioning](#5--api-versioning) | URL segment versioning |
+| 6 | [Rate Limiting](#6--rate-limiting) | Protect API dari abuse |
+| 7 | [Audit Logging (Audit.NET)](#7--audit-logging-auditnet) | Request/response tracking |
+| 8 | [CORS Lock-down](#8--cors-lock-down) | Cross-Origin Resource Sharing |
+| 9 | [Unit of Work & Repository Pattern](#9--unit-of-work--repository-pattern) | Transaction management & data access |
+| 10 | [Validation Pipeline (FluentValidation)](#10--validation-pipeline-fluentvalidation) | Auto-validation, session config |
+| 11 | [Background Jobs (Hangfire)](#11--background-jobs-hangfire) | Scheduled daily sync |
+| 12 | [HTTP Client & Resilience (Polly)](#12--http-client--resilience-polly) | BNM API call, retry policy |
+| 13 | [Global Error Handling](#13--global-error-handling) | Exception middleware |
+| 14 | [EF Core Interceptor — Auto Audit Fields](#14--ef-core-interceptor--auto-audit-fields) | CreatedOn/ModifiedOn auto-set |
+| 15 | [Business Logic — Sync Flow](#15--business-logic--sync-flow) | Core sync handler, weekend logic |
+| 16 | [Dependency Injection Registration](#16--dependency-injection-registration) | Multi-layer DI wiring |
+| 17 | [Configuration (appsettings)](#17--configuration-appsettings) | Semua config sections |
 
-**Apa benda ni?** Entry point untuk keseluruhan aplikasi. Semua services register sini, semua middleware configure sini.
+---
 
-**Kenapa penting?** Kalau tak faham file ni, tak faham macam mana app start dan flow request.
+## 1 — Layered Architecture
 
-### Using Statements (Line 1-14)
+### Apa?
+Projek dibahagikan kepada 6 projek berasingan, setiap satu ada tanggungjawab tersendiri.
 
-```csharp
-using AspNetCoreRateLimit;                              // Rate limiting package
-using Asp.Versioning;                                   // API versioning
-using Asp.Versioning.ApiExplorer;                       // Swagger version discovery
-using Hangfire;                                         // Background job scheduler
-using Mediator;                                         // CQRS mediator pattern
-using Microsoft.OpenApi.Models;                         // Swagger/OpenAPI models
-using Serilog;                                          // Structured logging
-using Unity.ExchangeRates.Infrastructure;               // EF Core, Repositories
-using Unity.ExchangeRates.Service;                      // Business logic handlers
-using Unity.ExchangeRates.Shared;                       // Hangfire jobs, HTTP client
-using Unity.ExchangeRates.Shared.Jobs;                  // Job interface
-using Unity.ExchangeRates.Api.Configurations;           // CORS, Audit, Mapper config
-using Unity.ExchangeRates.Api.Configurations.Logging;   // Serilog enricher
-using Unity.ExchangeRates.Api.Middlewares;              // Exception handler, API Key auth
+### Kenapa?
+- **Separation of Concerns** — setiap layer fokus satu perkara sahaja
+- **Testable** — boleh mock satu layer penuh tanpa sentuh yang lain
+- **Maintainable** — tambah feature baru tak ganggu layer lain
+- **Consistent** — pattern yang sama digunakan dalam Facility service
+
+### Struktur
+
+```
+Unity.ExchangeRates.svc/src/
+├── Unity.ExchangeRates.Api/              ← Entry point
+│   ├── Controllers/                       ← REST endpoints
+│   ├── Middlewares/                        ← Exception handler, API Key auth
+│   ├── Configurations/                    ← CORS, Audit, Mapper, Logging
+│   └── docs/                              ← Dokumentasi
+├── Unity.ExchangeRates.Domain/           ← Pure models, zero dependency
+│   ├── Models/                            ← Entity classes
+│   ├── Events/                            ← Audit event contracts
+│   └── Exceptions/                        ← Custom exceptions
+├── Unity.ExchangeRates.Repository/       ← Interface sahaja
+│   ├── IExchangeRateRepository.cs
+│   └── IUnitOfWork.cs
+├── Unity.ExchangeRates.Infrastructure/   ← Concrete implementation
+│   ├── Data/AppDbContext.cs               ← EF Core DbContext
+│   ├── Repositories/                      ← Repository implementation
+│   ├── Interceptors/                      ← SaveChanges interceptor
+│   └── Migrations/                        ← Database migrations
+├── Unity.ExchangeRates.Service/          ← Business logic
+│   ├── Mediator/Commands/                 ← Write operations (Sync)
+│   ├── Mediator/Queries/                  ← Read operations (GetRate)
+│   ├── Behaviors/                         ← Validation pipeline
+│   ├── EventHandlers/                     ← Audit log handler
+│   └── Configurations/                    ← BnmApiOptions
+└── Unity.ExchangeRates.Shared/           ← Cross-cutting
+    ├── Jobs/                              ← Hangfire sync job
+    └── Services/                          ← Audit dispatcher, HTTP client
 ```
 
-### Service Registration (Line 29-31)
+### Dependency Direction (PENTING!)
 
-```csharp
-builder.Services.RegisterServiceModule(builder.Configuration);
-builder.Services.RegisterInfrastructureModule(builder.Configuration);
-builder.Services.RegisterSharedServiceModule(builder.Configuration);
+```
+Api → Service → Domain ← Repository
+Api → Infrastructure → Domain
+Api → Shared → Service
 ```
 
-**Kenapa pattern ni?** Setiap layer manage DI registration sendiri. Kelebihan:
-- **Encapsulation** — layer Service tak perlu tahu internal Infrastructure
-- **Maintainability** — nak tambah service baru? Ubah satu file je dalam layer tu
-- **Test-friendly** — boleh mock satu layer penuh
+- **Domain** & **Repository** = paling inner, ZERO dependency pada outer layers
+- **Infrastructure** implement **Repository** interfaces
+- **Api** tie semuanya bersama melalui DI registration
 
-### Middleware Pipeline (Line 57-59)
+### Kelebihan Pattern Ni
+1. Kalau nak tukar database (contoh: dari SQL Server ke PostgreSQL), hanya ubah **Infrastructure** — Service dan Domain tak terkesan
+2. Kalau nak tambah endpoint baru, hanya tambah dalam **Api** dan **Service** — Infrastructure tak terkesan
+3. Unit test boleh mock **Repository interface** tanpa perlu real database
 
+---
+
+## 2 — CQRS Pattern (Mediator)
+
+### Apa?
+CQRS = **Command Query Responsibility Segregation**. Kita pisahkan operasi READ dari operasi WRITE.
+
+- **Query** = baca data (GET endpoint)
+- **Command** = tulis/ubah data (POST sync endpoint)
+
+### Kenapa?
+- **Single Responsibility** — setiap handler buat SATU kerja sahaja
+- **Testable** — test handler secara terasing tanpa HTTP context
+- **Scalable** — boleh scale read dan write secara bebas
+- **Clean controller** — controller hanya map request → command/query → response
+
+### Macam Mana?
+
+Guna library **Mediator** (source-generated, lebih pantas dari MediatR).
+
+📂 `Api/Program.cs` — Line 34:
 ```csharp
-app.UseMiddleware<ExceptionHandlerMiddleware>();   // 1st — catch semua exception
-app.UseMiddleware<ApiKeyAuthMiddleware>();          // 2nd — validate API key
-app.UseIpRateLimiting();                           // 3rd — check rate limit
+builder.Services.AddMediator(opt => opt.ServiceLifetime = ServiceLifetime.Scoped);
+```
+- `Scoped` = satu instance Mediator per HTTP request
+- Source-generated = compile-time, bukan reflection — lebih pantas
+
+### Flow: GET Request
+
+```
+Client → Controller.GetRate()
+         → _mapper.Map<ExchangeRateQuery>(request)
+         → _mediator.Send(query)
+           → [RequestValidationBehavior] ← validate input
+           → [ExchangeRateQueryHandler]  ← query database
+         → _mapper.Map<BaseResponse>(result)
+       → return JSON
 ```
 
-**Kenapa susunan ni penting?**
-- Exception handler MESTI paling luar — kalau API key middleware crash, exception handler masih catch
-- API key check SEBELUM rate limiter — supaya request tanpa key tak kira dalam quota
-- Rate limiter selepas auth — hanya authenticated requests yang dikira
-
-### ConfigureApiVersioning (Line 113-127)
-
+📂 `Api/Controllers/ExchangeRateController.cs`:
 ```csharp
-static void ConfigureApiVersioning(IServiceCollection services)
+[HttpGet("{currency}/{date}")]
+public async Task<IActionResult> GetRate(string currency, string date)
 {
-    services.AddApiVersioning(options =>
+    _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency, date);
+    var request = new ExchangeRateRequest { currency = currency, date = date };
+    var query = _mapper.Map<ExchangeRateQuery>(request);         // Map ke Query object
+    var result = await _mediator.Send(query);                     // Hantar ke handler
+    return ApiResponse<BaseResponse, BaseResult>(                 // Standardize response
+        _mapper.Map<BaseResponse>(result.ValueOrDefault), result);
+}
+```
+
+📂 `Service/Mediator/Queries/ExchangeRates/ExchangeRateQueryHandler.cs`:
+```csharp
+public async ValueTask<Result<BaseResult>> Handle(ExchangeRateQuery request, CancellationToken cancellationToken)
+{
+    var createdDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+    var history = await _repository.GetRateByCreatedDateAsync(request.currency!, createdDate, cancellationToken);
+
+    if (history is null)
+        return Result.Fail(new NotFoundError() { errorCode = "00404", errorMsg = "No exchange rate data found..." });
+
+    return new BaseResult() { data = history };
+}
+```
+
+### Flow: POST Request (Sync)
+
+```
+Client → Controller.Sync()
+         → _mapper.Map<ExchangeRateSyncCommand>(request)
+         → _mediator.Send(command)
+           → [RequestValidationBehavior]          ← validate date & session
+           → [ExchangeRateSyncCommandHandler]     ← call BNM API, save to DB
+         → return JSON
+```
+
+### Flow: GET Currencies (Latest)
+
+```
+Client → Controller.GetCurrencies()
+         → new GetCurrenciesQuery()
+         → _mediator.Send(query)
+           → [GetCurrenciesQueryHandler]  ← query database
+         → return JSON
+```
+
+📂 `Api/Controllers/ExchangeRateController.cs`:
+```csharp
+[HttpGet("currencies")]
+[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+[ProducesResponseType(typeof(void), StatusCodes.Status500InternalServerError)]
+public async Task<IActionResult> GetCurrencies()
+{
+    _logger.LogInformation("GetCurrencies request received");
+    var query = new GetCurrenciesQuery();           // Tak perlu mapper — tiada input params
+    var result = await _mediator.Send(query);       // Hantar ke handler
+    return ApiResponse<BaseResult>(result);          // Return direct — tak perlu map
+}
+```
+
+📂 `Service/Mediator/Queries/Currencies/GetCurrenciesQuery.cs`:
+```csharp
+public class GetCurrenciesQuery : IRequest<Result<BaseResult>>
+{
+    // Empty — tak perlu params, fetch semua currencies
+}
+```
+
+📂 `Service/Mediator/Queries/Currencies/GetCurrenciesQueryHandler.cs`:
+```csharp
+public async ValueTask<Result<BaseResult>> Handle(GetCurrenciesQuery request, CancellationToken cancellationToken)
+{
+    var currencies = await _repository.GetActiveCurrenciesAsync(cancellationToken);
+
+    var result = currencies.Select(c => new
     {
-        options.AssumeDefaultVersionWhenUnspecified = true;   // Backward compatible
-        options.DefaultApiVersion = new ApiVersion(1, 0);     // Default v1.0
-        options.ReportApiVersions = true;                     // Header: api-supported-versions
-        options.ApiVersionReader = new UrlSegmentApiVersionReader();  // Version dalam URL
-    })
-    .AddApiExplorer(setup =>
+        currencyCode = c.Id,         // CurrencyCode dari database
+        currencyName = c.CurrencyName
+    }).ToList();
+
+    return new BaseResult() { data = result };
+}
+```
+
+**Kenapa endpoint ni?**
+- Client perlu tahu currencies apa yang available sebelum call sync/getrate
+- Tak perlu hardcode currency list dalam frontend
+- Kalau tambah currency baru dalam DB, frontend auto nampak
+
+**URL:** `GET /api/v1/exchange-rates/currencies`
+
+**Response contoh:**
+```json
+{
+  "status": "Success",
+  "data": [
+    { "currencyCode": "usd", "currencyName": "US Dollar" },
+    { "currencyCode": "gbp", "currencyName": "British Pound" },
+    { "currencyCode": "eur", "currencyName": "Euro" }
+  ]
+}
+```
+
+### Kenapa `ISender` bukan `IMediator`?
+
+📂 `Api/Controllers/ExchangeRateController.cs` — Line 21:
+```csharp
+private readonly ISender _mediator;  // Bukan IMediator
+```
+- `ISender` = hanya `Send()` (command/query)
+- `IMediator` = `Send()` + `Publish()` (notifications)
+- Controller hanya perlu send — **Interface Segregation Principle** (SOLID)
+
+### Kelebihan
+1. Controller jadi sangat thin — hanya 5-6 baris per method
+2. Business logic 100% dalam handlers — senang test
+3. Validation automatik melalui pipeline behavior
+4. Senang trace flow — setiap operation ada handler yang jelas
+
+---
+
+## 3 — Structured Logging (Serilog)
+
+### Apa?
+Logging guna **Serilog** — library structured logging yang simpan data sebagai key-value pairs, bukan plain text.
+
+### Kenapa Serilog, bukan default `ILogger`?
+- **Structured data** — `currency=usd, date=2026-02-27` vs `"GetRate for usd on 2026-02-27"`. Boleh search/filter by field
+- **Multiple sinks** — tulis ke File DAN Console serentak
+- **Rolling files** — log file rotate mengikut interval (setiap jam)
+- **Configuration-driven** — tukar log level tanpa recompile, cuma ubah appsettings
+- **Custom enrichers** — tambah method name, timestamp, etc. automatik
+
+### Config
+
+📂 `Api/Program.cs` — Lines 233-240:
+```csharp
+static void ConfigureLog(IHostBuilder hostBuilder)
+{
+    hostBuilder.UseSerilog((context, config) =>
     {
-        setup.GroupNameFormat = "'v'VVV";                // Format: v1, v2
-        setup.SubstituteApiVersionInUrl = true;         // Auto replace {version} → 1
+        config.ReadFrom.Configuration(context.Configuration);  // Baca dari appsettings
+        config.Enrich.WithMethodName();                        // Custom enricher
     });
 }
 ```
 
-**Kenapa guna URL Segment Versioning?**
-- Clean URL: `/api/v1/exchangerates` vs `/api/exchangerates?api-version=1`
-- Industry standard — sama macam yang Facility guna
-- Senang faham — user nampak version terus dalam URL
-- `ReportApiVersions = true` — response header tunjuk version mana yang supported
-
-**Kenapa `AssumeDefaultVersionWhenUnspecified = true`?**
-- Backward compatibility — client lama yang belum update masih boleh call tanpa version
-
-### ConfigureSwagger (Line 132-181)
-
-```csharp
-// Loop setiap API version → buat Swagger doc untuk setiap satu
-foreach (var description in apiVersionDescriptionProvider.ApiVersionDescriptions)
-{
-    swagger.SwaggerDoc(description.GroupName, apiInfo);
-}
-
-// Security definition — buat button Authorize dalam Swagger UI
-swagger.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
-{
-    Type = SecuritySchemeType.ApiKey,
-    Name = "X-Api-Key",
-    In = ParameterLocation.Header,
-});
-
-// Security requirement — force semua endpoint perlukan key
-swagger.AddSecurityRequirement(...);
-```
-
-**Kenapa configure Swagger macam ni?**
-- **Versioned docs** — kalau ada V1 dan V2, Swagger tunjuk dropdown untuk pilih version
-- **Authorize button** — developer boleh test API dengan key terus dari Swagger, tak perlu Postman
-- **Security requirement** — Swagger auto include `X-Api-Key` header dalam setiap request selepas authorize
-
-### ConfigureRateLimit (Line 221-228)
-
-```csharp
-services.AddMemoryCache();                            // Counter simpan dalam RAM
-services.Configure<IpRateLimitOptions>(...);           // Baca config dari appsettings
-services.Configure<IpRateLimitPolicies>(...);          // Policy-based rules
-services.AddInMemoryRateLimiting();                    // In-memory counter
-services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
-```
-
-**Kenapa rate limiting penting?**
-- **Prevent abuse** — kalau ada bot atau attacker spam API, rate limiter block dia
-- **Protect resources** — database connection pool terhad, rate limiter jaga tak overflow
-- **Fair usage** — semua client dapat fair share
-
-**Config dalam appsettings:**
-- `500 req/s` per IP — cukup untuk normal usage, block spam
-- `429 Too Many Requests` — client tahu dia kena slow down
-- Custom JSON response — bukan blank error page
-
-### ConfigureCors (Line 186-216)
-
-```csharp
-if (corsOptions == null && environment.IsDevelopment())
-    builder.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();  // Dev: allow semua
-else if (corsOptions == null)
-    throw new InvalidOperationException("Cors is not configured");  // Prod: WAJIB config
-else
-    builder.WithOrigins(corsOptions.Origins)...;  // Prod: hanya origins yang listed
-```
-
-**Kenapa ada throw exception?**
-- **Safety net** — kalau deploy ke production tanpa CORS config, app tak start langsung
-- Lebih baik gagal awal dari terdedah tanpa protection
-
-### ConfigureLog (Line 233-240)
-
-```csharp
-hostBuilder.UseSerilog((context, config) =>
-{
-    config.ReadFrom.Configuration(context.Configuration);  // Config dari appsettings
-    config.Enrich.WithMethodName();                        // Custom enricher
-});
-```
-
-**Kenapa Serilog, bukan default logger?**
-- **Structured logging** — log data sebagai key-value, bukan plain text. Boleh search/filter
-- **Multiple sinks** — tulis ke File DAN Console serentak
-- **Rolling interval** — file rotate setiap jam, avoid single huge file
-- **Configuration-driven** — tukar log level tanpa recompile
-
----
-
-## 2. ExceptionHandlerMiddleware
-
-📂 **Path:** `src/Unity.ExchangeRates.Api/Middlewares/ExceptionHandlerMiddleware.cs`
-
-**Apa benda ni?** Global exception handler — tangkap SEMUA exception yang tak dihandle.
-
-**Kenapa guna middleware, bukan try-catch dalam setiap controller?**
-- **DRY** — tulis error handling sekali, cover semua endpoint
-- **Consistent response** — semua error return format JSON yang sama
-- **Tak boleh miss** — walaupun developer lupa try-catch, middleware tetap catch
-
-### Constructor Dependencies
-
-```csharp
-private readonly RequestDelegate _next;                          // Middleware seterusnya
-private readonly IWebHostEnvironment _env;                       // Check environment (dev/prod)
-private readonly ILogger<ExceptionHandlerMiddleware> _logger;    // Typed logger
-```
-
-### Invoke Method — Flow
-
-```csharp
-public async Task Invoke(HttpContext context)
-{
-    try
-    {
-        await _next(context);  // Cuba jalankan request ke middleware/controller seterusnya
-    }
-    catch (Exception error)
-    {
-        var response = context.Response;
-        response.ContentType = "application/json";
-        dynamic resultObject = new JObject();
-        resultObject.message = new JValue(error?.Message);
-
-        switch (error)
-        {
-            case ExchangeRatesDomainException:
-                _logger.LogWarning(error, "Domain exception: {Message}", error?.Message);
-                response.StatusCode = (int)HttpStatusCode.BadRequest;  // 400
-                break;
-
-            case ValidationException e:
-                _logger.LogWarning(error, "Validation exception: {Message}", error?.Message);
-                response.StatusCode = (int)HttpStatusCode.BadRequest;  // 400
-                resultObject.message = e.Errors.Select(e => e.ErrorMessage).Distinct().FirstOrDefault();
-                break;
-
-            default:
-                _logger.LogError(error, "Unhandled exception: {Message}", error?.Message);
-                response.StatusCode = (int)HttpStatusCode.InternalServerError;  // 500
-                break;
+📂 `appsettings.json` — Serilog section:
+```json
+"Serilog": {
+    "MinimumLevel": {
+        "Default": "Information",
+        "Override": {
+            "Microsoft": "Warning",
+            "System": "Warning"
         }
-
-        await response.WriteAsync(resultObject.ToString());
-    }
+    },
+    "WriteTo": [
+        { "Name": "Console" },
+        {
+            "Name": "File",
+            "Args": {
+                "path": "./logs/log-.txt",
+                "rollingInterval": "Hour",
+                "outputTemplate": "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {SourceContext}{MethodName} {Message:lj}{NewLine}{Exception}"
+            }
+        }
+    ]
 }
 ```
 
-**Kenapa categorize exception?**
-- **DomainException** → `LogWarning` + 400 — business rule violation, EXPECTED behavior
-- **ValidationException** → `LogWarning` + 400 — input salah, EXPECTED behavior
-- **Default** → `LogError` + 500 — unexpected crash, NEED ATTENTION
+**Explain config:**
+- `MinimumLevel: Information` — log dari Information ke atas (Debug diabaikan dalam production)
+- `Override Microsoft: Warning` — framework logs hanya Warning ke atas (kurangkan noise)
+- `rollingInterval: Hour` — file baru setiap jam. Contoh: `log-2026030210.txt`
+- `outputTemplate` — format: `[2026-03-02 10:05:23 INF] ExchangeRateController.GetRate request received...`
 
-**Kenapa Warning untuk domain/validation, bukan Error?**
-- Sebab ia bukan error sebenar — user hantar input tak valid, itu normal
-- `LogError` reserved untuk benda yang BETUL-BETUL salah (database down, etc.)
-- Dalam production, ops team monitor Error level — tak nak banjir dengan false alarm
+### Custom Enricher — LogMethodNameEnricher
+
+📂 `Api/Configurations/Logging/LogMethodNameEnricher.cs`
+
+**Apa?** Tambah nama method secara automatik dalam setiap log entry.
+
+**Kenapa?** Default Serilog hanya log class name (`SourceContext`). Dengan enricher ni, log tunjuk class DAN method — senang trace.
+
+### Log Level Strategy
+
+| Level | Bila Guna | Contoh |
+|-------|----------|--------|
+| **Debug** | Detail internal, dev sahaja | `"Repository: GetActiveCurrenciesAsync called"` |
+| **Information** | Business milestones | `"Sync completed. Synced 8/8 currencies"` |
+| **Warning** | Recoverable issues, security alerts | `"API Key missing, IP=192.168.1.1"` |
+| **Error** | Operation failures | `"BNM API returned 404 for JPY"` |
+| **Critical** | System crashes | `"Hangfire job crashed unexpectedly"` |
+
+### Contoh Penggunaan dalam Projek
+
+📂 `Api/Middlewares/ApiKeyAuthMiddleware.cs`:
+```csharp
+_logger.LogWarning("API Key missing from request. Path={Path}, IP={IP}",
+    context.Request.Path, context.Connection.RemoteIpAddress);
+```
+- **Warning** — unauthorized access attempt. Ops team boleh monitor pattern.
+
+📂 `Service/Mediator/Commands/.../ExchangeRateSyncCommandHandler.cs`:
+```csharp
+_logger.LogInformation("Completed. Synced {synced}/{total} currencies for {date}",
+    syncedCount, currencies.Count, targetDateStr);
+```
+- **Information** — business milestone. Sync berjaya.
+
+📂 `Infrastructure/UnitOfWork.cs`:
+```csharp
+_logger.LogWarning("UnitOfWork: Transaction rolled back");
+```
+- **Warning** — rollback bermakna something went wrong.
+
+📂 `Shared/Jobs/ExchangeRateSyncJob.cs`:
+```csharp
+_logger.LogCritical(ex, "Hangfire SyncDaily: Job crashed unexpectedly");
+```
+- **Critical** — highest severity. Job crash = data takde untuk hari tu.
+
+### Kelebihan
+1. **Searchable** — cari semua log untuk `currency=usd` tanpa regex
+2. **Filterable** — show hanya Error level dalam production
+3. **Configurable** — tukar level on-the-fly tanpa redeploy
+4. **Traceable** — method name + class name dalam setiap entry
+5. **Rolling files** — tak jadi satu file gergasi
 
 ---
 
-## 3. ApiKeyAuthMiddleware
+## 4 — Security — API Key Authentication
 
-📂 **Path:** `src/Unity.ExchangeRates.Api/Middlewares/ApiKeyAuthMiddleware.cs` — 71 baris
+### Apa?
+Setiap API request WAJIB ada header `X-Api-Key` dengan key yang sah. Tanpa key = 401 Unauthorized.
 
-**Apa benda ni?** Middleware yang validate `X-Api-Key` header setiap request.
+### Kenapa API Key?
+- **Immediate protection** — mudah implement, terus secure
+- **Phase 1** — nanti bila IDP ready, tambah JWT sebagai Phase 2
+- **Simple for clients** — hanya perlu tambah satu header
+- **Trackable** — boleh beri key berbeza untuk setiap client, trace siapa call
 
-**Kenapa guna Middleware, bukan Action Filter?**
-- **Earlier in pipeline** — middleware run SEBELUM controller, filter run SELEPAS binding
-- **Cover semua endpoint** — tak perlu letak attribute pada setiap controller
-- **Boleh skip specific paths** — Swagger, Hangfire tak perlu auth
+### Macam Mana?
 
-### Line-by-line Invoke
+Custom middleware yang intercept SETIAP request sebelum sampai controller.
+
+📂 `Api/Middlewares/ApiKeyAuthMiddleware.cs`:
+
+#### Step 1 — Dependencies
+
+```csharp
+private readonly RequestDelegate _next;                    // Middleware seterusnya dalam pipeline
+private readonly IConfiguration _configuration;            // Baca API key dari config
+private readonly ILogger<ApiKeyAuthMiddleware> _logger;    // Log security events
+private const string ApiKeyHeaderName = "X-Api-Key";      // Nama header yang client kene hantar
+```
+
+- `RequestDelegate _next` — kalau tak panggil `_next(context)`, request BERHENTI sini
+- `const string` — header name tetap, consistent across codebase
+
+#### Step 2 — Skip Dev Tools
 
 ```csharp
 var path = context.Request.Path.Value?.ToLower() ?? string.Empty;
-```
-- `?.` = null-conditional — kalau `Path.Value` null, tak crash
-- `?? string.Empty` = null-coalescing — kalau null, guna empty string
-- `ToLower()` — case-insensitive comparison
 
-```csharp
 if (path.StartsWith("/swagger") || path.StartsWith("/hangfire"))
 {
-    await _next(context);  // Skip — allow tanpa key
+    await _next(context);  // Teruskan tanpa check
     return;
 }
 ```
-- **Kenapa skip Swagger?** Swagger UI sendiri perlu load tanpa key. User authorize DALAM Swagger selepas UI load
-- **Kenapa skip Hangfire?** Dashboard adalah dev tool. Dalam production, Swagger dan Hangfire dah disabled (line 61 Program.cs)
+
+- **Kenapa skip Swagger?** UI perlu load dulu tanpa key. User authorize DALAM Swagger selepas buka
+- **Kenapa skip Hangfire?** Dashboard = dev tool. Production dah disable (line 61 `Program.cs`)
+- `?.ToLower()` — null-safe dan case-insensitive comparison
+
+#### Step 3 — Check Header Ada ke Tak
 
 ```csharp
 if (!context.Request.Headers.TryGetValue(ApiKeyHeaderName, out var extractedApiKey))
@@ -296,557 +420,777 @@ if (!context.Request.Headers.TryGetValue(ApiKeyHeaderName, out var extractedApiK
     return;  // STOP — tak panggil _next
 }
 ```
-- `TryGetValue` — safe check, tak throw exception kalau header takde
-- **Log IP address** — security audit trail. Kalau ada suspicious IP, boleh trace
-- `return` tanpa `_next` — request BERHENTI sini, tak pernah sampai controller
+
+- `TryGetValue` — safe check, tak throw exception
+- Log **IP address** — penting untuk security monitoring
+- `return` tanpa `_next` — request BERHENTI, tak sampai controller
+
+#### Step 4 — Validate Key
 
 ```csharp
 var configuredApiKey = _configuration["ApiSecurity:ApiKey"];
 if (string.IsNullOrEmpty(configuredApiKey) || !string.Equals(extractedApiKey, configuredApiKey))
-```
-- Baca key dari config `ApiSecurity:ApiKey`
-- `string.IsNullOrEmpty` check — kalau config kosong, reject juga (safety)
-- `string.Equals` — exact string comparison
-
-```csharp
-await _next(context);  // Key SAH — teruskan ke rate limiter → controller
-```
-- Hanya sampai sini kalau key valid
-
-### WriteUnauthorizedResponse
-
-```csharp
-context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;  // 401
-context.Response.ContentType = "application/json";
-
-var response = new
 {
-    status = "Failed",
-    errorCode = "00401",
-    errorMsg = message,
-    timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", ...)
-};
-```
-
-**Kenapa proper JSON, bukan just status code?**
-- Client developer nampak error message yang jelas
-- Consistent format dengan error response lain dalam API
-- `timestamp` — berguna untuk debugging ("bila masa error ni berlaku?")
-
----
-
-## 4. ExchangeRateController
-
-📂 **Path:** `src/Unity.ExchangeRates.Api/Controllers/ExchangeRateController.cs` — 57 baris
-
-**Apa benda ni?** REST controller — bridge antara HTTP requests dan business logic.
-
-**Kenapa controller SANGAT THIN?**
-- **Single Responsibility** — controller hanya handle HTTP concerns (routing, status codes)
-- **Business logic dalam handlers** — senang test tanpa HTTP context
-- **CQRS pattern** — controller tak perlu tahu macam mana data di-process
-
-### Class Attributes
-
-```csharp
-[ApiController]                                              // Enable auto model validation
-[ApiVersion("1.0")]                                          // Version ni: v1.0
-[Route("api/v{version:apiVersion}/exchangerates")]           // URL pattern
-```
-
-- `[ApiController]` — 3 automatic behaviors: (1) auto 400 untuk invalid model, (2) attribute routing required, (3) problem details for errors
-- `[ApiVersion("1.0")]` — assign controller ke version 1.0. Nanti nak buat V2, boleh buat controller baru
-- Route: `v{version:apiVersion}` → system replace jadi `v1`. URL jadi `/api/v1/exchangerates`
-
-### Constructor (Line 24-29)
-
-```csharp
-private readonly IMapper _mapper;                            // AutoMapper
-private readonly ISender _mediator;                          // Mediator (send only)
-private readonly ILogger<ExchangeRateController> _logger;    // Typed logger
-
-public ExchangeRateController(IMapper mapper, ISender mediator, ILogger<ExchangeRateController> logger)
-```
-
-**Kenapa `ISender` bukan `IMediator`?**
-- `ISender` = hanya boleh `Send()` command/query
-- `IMediator` = `Send()` + `Publish()` notifications
-- Controller hanya perlu send, tak perlu publish — **Interface Segregation Principle**
-
-**Kenapa `ILogger<ExchangeRateController>`?**
-- Typed logger — dalam log output, nampak `ExchangeRateController` sebagai source
-- Senang filter log by controller
-
-### GetRate Method (Line 31-42)
-
-```csharp
-[HttpGet("{currency}/{date}")]
-[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
-[ProducesResponseType(typeof(void), StatusCodes.Status400BadRequest)]
-[ProducesResponseType(typeof(void), StatusCodes.Status404NotFound)]
-public async Task<IActionResult> GetRate(string currency, string date)
-{
-    _logger.LogInformation("GetRate request received: currency={currency}, date={date}",
-        currency, date);
-
-    var request = new ExchangeRateRequest { currency = currency, date = date };
-    var query = _mapper.Map<ExchangeRateQuery>(request);
-    var result = await _mediator.Send(query);
-    return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
+    _logger.LogWarning("Invalid API Key provided. Path={Path}, IP={IP}", ...);
+    await WriteUnauthorizedResponse(context, "Invalid API Key.");
+    return;
 }
+
+await _next(context);  // KEY SAH — teruskan ke rate limiter → controller
 ```
 
-**Line-by-line:**
-1. `[HttpGet("{currency}/{date}")]` — URL: `/api/v1/exchangerates/usd/2026-02-27`
-2. `[ProducesResponseType...]` — Swagger tahu response type, show dalam UI
-3. `_logger.LogInformation(...)` — Log **setiap** request untuk monitoring. Structured format `{currency}`, `{date}` — boleh search by currency
-4. `new ExchangeRateRequest{...}` — buat request object dari URL params
-5. `_mapper.Map<ExchangeRateQuery>(request)` — AutoMapper convert Request → Query. Property names match, auto-map
-6. `_mediator.Send(query)` — hantar ke handler. Mediator cari `ExchangeRateQueryHandler` dan execute
-7. `ApiResponse<...>(...)` — method dari `BaseApiController` yang standardize response format
+- Double check: config tak kosong DAN key match
+- Hanya `_next(context)` dipanggil kalau key 100% valid
 
-### Sync Method (Line 44-54)
+#### Step 5 — JSON Error Response
 
 ```csharp
-[HttpPost("sync")]
-public async Task<IActionResult> Sync([FromBody] ExchangeRateSyncRequest syncRequest)
+private static async Task WriteUnauthorizedResponse(HttpContext context, string message)
 {
-    _logger.LogInformation("Sync request received: date={date}, session={session}",
-        syncRequest.date, syncRequest.session);
-
-    var command = _mapper.Map<ExchangeRateSyncCommand>(syncRequest);
-    var result = await _mediator.Send(command);
-    return ApiResponse<BaseResponse, BaseResult>(...);
-}
-```
-
-- `[FromBody]` — JSON body: `{"date": "2026-02-27", "session": "1700"}`
-- `syncRequest.session` — session BNM: `0900`, `1130`, `1200`, `1700`
-- Pattern sama — log, map, send, return. **Consistency** across all endpoints
-
----
-
-## 5. RequestValidationBehavior
-
-📂 **Path:** `src/Unity.ExchangeRates.Service/Behaviors/RequestValidationBehavior.cs`
-
-**Apa benda ni?** Mediator pipeline behavior — macam middleware, tapi untuk Mediator.
-
-**Kenapa guna pipeline behavior?**
-- **Cross-cutting** — semua commands/queries auto-validated tanpa code duplicate
-- **Fail fast** — kalau input tak valid, handler TAK dipanggil langsung
-- **Separation** — validation logic terpisah dari business logic
-
-```csharp
-public class RequestValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
-    where TRequest : IRequest<TResponse>
-    where TResponse : ResultBase<TResponse>, new()
-{
-    private readonly IEnumerable<IValidator<TRequest>> _validators;
-    private readonly ILogger<...> _logger;
-```
-
-- `IPipelineBehavior` — intercept setiap request SEBELUM handler
-- `IEnumerable<IValidator<TRequest>>` — inject SEMUA validators untuk request type ni
-- Generic `<TRequest, TResponse>` — satu behavior cover semua commands dan queries
-
-```csharp
-public async ValueTask<TResponse> Handle(TRequest message, 
-    MessageHandlerDelegate<TRequest, TResponse> next, CancellationToken cancellationToken)
-{
-    var context = new ValidationContext<TRequest>(message);
-    var validationResults = await Task.WhenAll(
-        _validators.Select(v => v.ValidateAsync(context, cancellationToken)));
-    var failures = validationResults
-        .SelectMany(r => r.Errors)
-        .Where(f => f != null).ToList();
-
-    if (failures.Any())
-    {
-        _logger.LogWarning("Validation Error: {@errors}", errors);
-        return new TResponse().WithErrors(errors);  // STOP — handler TAK dipanggil
-    }
-
-    return await next(message, cancellationToken);  // Valid — teruskan ke handler
-}
-```
-
-**Line-by-line:**
-1. `ValidationContext` — wrap request untuk FluentValidation
-2. `Task.WhenAll` — run SEMUA validators **serentak** (parallel) — performance
-3. `SelectMany` — flatten results dari semua validators jadi satu list
-4. `failures.Any()` — kalau ada mana-mana error → return error, handler LANGSUNG tak dipanggil
-5. `next(message, cancellationToken)` — hanya sampai sini kalau SEMUA validators pass
-
----
-
-## 6. ExchangeRateSyncCommandValidator
-
-📂 **Path:** `src/Unity.ExchangeRates.Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandValidator.cs`
-
-**Apa benda ni?** Validator untuk POST sync endpoint — validate `date` dan `session`.
-
-**Kenapa FluentValidation?**
-- **Readable** — rule dibaca macam English: "RuleFor date, NotEmpty, Matches format"
-- **Testable** — boleh unit test setiap rule secara terasing
-- **Auto-discovery** — `AddValidatorsFromAssembly()` dalam DI auto-register semua validators
-
-### Session Config — 0900, 1130, 1200, 1700
-
-```csharp
-private static readonly HashSet<string> ValidSessions = new() { "0900", "1130", "1200", "1700" };
-```
-
-**Kenapa 4 session ni?**
-- Ini BNM trading sessions:
-  - `0900` — Opening rate (pagi)
-  - `1130` — Mid-morning rate
-  - `1200` — Noon rate
-  - `1700` — Closing rate (petang/akhir hari)
-- Daily automated job guna `1700` (default dalam appsettings `BnmApiSettings.DefaultSession`)
-- **Kenapa `1700`?** Sebab closing rate paling stabil — reflect pergerakan sepanjang hari
-- `HashSet` bukan `List` — O(1) lookup vs O(n), lebih efficient untuk Contains check
-
-```csharp
-RuleFor(c => c.date)
-    .NotEmpty()
-    .WithErrorCode("00400")
-    .WithMessage("Date is required.")
-    .Matches(@"^\d{4}-\d{2}-\d{2}$")
-    .WithErrorCode("00400")
-    .WithMessage("Date must be in yyyy-MM-dd format.");
-```
-
-- `.NotEmpty()` — date wajib ada, tak boleh null/empty
-- `.Matches(regex)` — MESTI format `yyyy-MM-dd` (contoh: `2026-02-27`)
-- Custom `WithErrorCode("00400")` — consistent error code across API
-
-```csharp
-RuleFor(c => c.session)
-    .Must(s => ValidSessions.Contains(s!))
-    .When(c => !string.IsNullOrEmpty(c.session))
-    .WithErrorCode("00400")
-    .WithMessage("Session must be one of: 0900, 1130, 1200, 1700.");
-```
-
-- `.When(...)` — validation HANYA run kalau session provided. Kalau empty, default dari config
-- `.Must(...)` — custom rule: session MESTI dalam list valid sessions
-- **Kenapa conditional?** Sebab session is optional — kalau tak provide, handler guna default `1700` dari `BnmApiSettings.DefaultSession`
-
----
-
-## 7. ExchangeRateSyncCommandHandler — Core Business Logic
-
-📂 **Path:** `src/Unity.ExchangeRates.Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandHandler.cs`
-
-**Apa benda ni?** JANTUNG aplikasi — semua sync logic ada sini.
-
-### Constructor Dependencies
-
-```csharp
-private readonly IUnitOfWork _unitOfWork;                           // Transaction management
-private readonly HttpClient _httpClient;                            // BNM API caller
-private readonly BnmApiOptions _settings;                          // Config (URL, session, etc.)
-private readonly ILogger<ExchangeRateSyncCommandHandler> _logger;  // Typed logger
-
-public ExchangeRateSyncCommandHandler(
-    IUnitOfWork unitOfWork,
-    IHttpClientFactory httpClientFactory,
-    IOptions<BnmApiOptions> settings,
-    ILogger<ExchangeRateSyncCommandHandler> logger)
-{
-    _unitOfWork = unitOfWork;
-    _httpClient = httpClientFactory.CreateClient("BnmClient");  // Named client
-    _settings = settings.Value;
-    _logger = logger;
-}
-```
-
-**Kenapa `IHttpClientFactory` bukan `new HttpClient()`?**
-- **Connection pool management** — factory reuse connections, avoid socket exhaustion
-- **Named client** — `"BnmClient"` sudah pre-configured dengan BaseURL dan retry policy
-- **IOptions pattern** — settings inject sebagai strongly-typed object, bukan raw string
-
-### Handle Method — Step by Step
-
-#### Step 1: Parse Date & Resolve Weekend
-
-```csharp
-var inputDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-var targetDate = ResolveBusinessDate(inputDate);
-var session = !string.IsNullOrEmpty(request.session) ? request.session : _settings.DefaultSession;
-```
-
-- `ParseExact` — strict parsing, hanya accept `yyyy-MM-dd`
-- `ResolveBusinessDate()` — Sabtu/Ahad → Jumaat (BNM tak publish weekend)
-- Session default ke `_settings.DefaultSession` (1700) kalau tak specified
-
-```csharp
-if (inputDate != targetDate)
-    _logger.LogInformation("Input date {inputDate} falls on weekend, resolved to {targetDate}", ...);
-```
-- Log hanya kalau date berubah (weekend → Friday) — informational
-
-#### Step 2: Load Currencies & Begin Transaction
-
-```csharp
-var currencies = await _unitOfWork.ExchangeRates.GetActiveCurrenciesAsync(cancellationToken);
-await _unitOfWork.BeginTransactionAsync(cancellationToken);
-```
-
-**Kenapa transaction?**
-- **All-or-nothing** — SEMUA currencies sync berjaya, ATAU semua rollback
-- Takde situation "USD sync tapi GBP tak sync" — data integrity
-- **UnitOfWork pattern** — handle transaction lifecycle (begin → commit/rollback)
-
-#### Step 3: Loop Each Currency
-
-```csharp
-foreach (var curr in currencies)
-{
-    var url = $"{path}/{curr.Id}/date/{targetDateStr}?session={session}&quote=rm";
-    var response = await _httpClient.GetAsync(url, cancellationToken);
-
-    if (!response.IsSuccessStatusCode)
-    {
-        _logger.LogError("Failed to fetch {currency}. BNM API returned {StatusCode}", ...);
-        continue;  // Skip, teruskan currency seterusnya
-    }
-
-    var bnmData = await response.Content.ReadFromJsonAsync<BnmApiResponse>(...);
-
-    var history = new ExchangeRateHistory
-    {
-        CurrencyCode = curr.Id,
-        RateDate = targetDate,
-        BuyingRate = rateData.Rate?.BuyingRate ?? 0,
-        SellingRate = rateData.Rate?.SellingRate ?? 0,
-        MiddleRate = rateData.Rate?.MiddleRate ?? 0,
-        CreatedBy = "System_Mediator"
+    context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;  // 401
+    context.Response.ContentType = "application/json";
+    var response = new {
+        status = "Failed", errorCode = "00401", errorMsg = message,
+        timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", ...)
     };
-
-    await _unitOfWork.ExchangeRates.AddRateHistoryAsync(history, cancellationToken);
-    syncedCount++;
+    await context.Response.WriteAsync(JsonSerializer.Serialize(response));
 }
 ```
 
-**Kenapa `continue` bukan `throw`?**
-- Kalau satu currency fail (misalnya BNM takde data JPY), yang lain masih boleh sync
-- `LogError` record mana yang fail — boleh investigate kemudian
-- **Partial sync lebih baik dari total failure**
+- **Kenapa JSON response?** Client nampak error message yang jelas, bukan blank 401
+- Format consistent dengan error response lain dalam API
 
-**Kenapa `?? 0` (null coalescing)?**
-- Safety — kalau BNM return null untuk rate, default ke 0 bukan crash
+### Config
 
-#### Step 4: Save & Commit
-
-```csharp
-await _unitOfWork.SaveChangesAsync(cancellationToken);
-await _unitOfWork.CommitAsync(cancellationToken);
-
-_logger.LogInformation("Completed. Synced {synced}/{total} currencies", syncedCount, currencies.Count);
-```
-
-#### Step 5: Error Handling
-
-```csharp
-catch (Exception ex)
-{
-    await _unitOfWork.RollbackAsync(cancellationToken);
-    _logger.LogError(ex, "ExchangeRateSyncCommandHandler failed. Transaction rolled back.");
-    return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = ex.Message });
+📂 `appsettings.Development.json`:
+```json
+"ApiSecurity": {
+    "ApiKey": "dev-unity-exchangerates-key-2026"
 }
 ```
+- Development: key hardcoded
+- **Production**: dari IDP / Azure Key Vault
 
-**Kenapa rollback?**
-- Database down, network error, etc. → rollback SEMUA data yang dah add
-- Data integrity — TAKDE partial data dalam database
-
-### ResolveBusinessDate
-
-```csharp
-private static DateTime ResolveBusinessDate(DateTime date)
-{
-    while (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
-        date = date.AddDays(-1);
-    return date;
-}
-```
-
-- `static` — tak perlu instance state, pure function
-- `while` loop — handle both Saturday DAN Sunday
-- Saturday → tolak 1 → Friday ✅
-- Sunday → tolak 1 → Saturday → tolak 1 → Friday ✅
+### Kelebihan
+1. **Centralized** — satu middleware cover semua endpoint
+2. **Logged** — setiap unauthorized attempt direkod
+3. **Extensible** — senang tambah JWT layer nanti
+4. **Consistent** — proper JSON error response
 
 ---
 
-## 8. ExchangeRateQueryHandler
+## 5 — API Versioning
 
-📂 **Path:** `src/Unity.ExchangeRates.Service/Mediator/Queries/ExchangeRates/ExchangeRateQueryHandler.cs`
+### Apa?
+Setiap endpoint ada version number dalam URL: `/api/v1/exchangerates/...`
 
-**Apa benda ni?** Handler untuk GET endpoint — query kadar dari database.
+### Kenapa?
+- **Breaking changes** — nanti V2 boleh ada different response format tanpa rosak V1 clients
+- **Backward compatibility** — V1 clients tetap boleh call walaupun V2 dah live
+- **Industry standard** — kebanyakan public API guna versioning
+- **Same as Facility** — consistent across projek
 
+### Macam Mana?
+
+📂 `Api/Program.cs` — Lines 113-127:
 ```csharp
-var createdDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-var history = await _repository.GetRateByCreatedDateAsync(request.currency!, createdDate, cancellationToken);
-
-if (history is null)
+static void ConfigureApiVersioning(IServiceCollection services)
 {
-    _logger.LogWarning("No rate found for currency={currency}, date={date}", ...);
-    return Result.Fail(new NotFoundError() { errorCode = "00404", ... });
-}
-
-_logger.LogInformation("Success for currency={currency}, date={date}", ...);
-return new BaseResult() { data = history };
-```
-
-**Kenapa query by `CreatedOn` bukan `RateDate`?**
-- User tanya "kadar untuk hari ini" — bermaksud data yang di-sync hari ini
-- `CreatedOn` = bila kita simpan data, `RateDate` = tarikh BNM
-- Weekend: 3 rows boleh ada `RateDate` yang sama (Friday), tapi `CreatedOn` berbeza (Sat, Sun, Mon)
-
-**Kenapa `LogWarning` untuk not found?**
-- Kalau data takde, bermakna sync mungkin gagal — ops team perlu investigate
-- Bukan `LogError` sebab mungkin memang belum sync (user query masa future date)
-
----
-
-## 9. UnitOfWork
-
-📂 **Path:** `src/Unity.ExchangeRates.Infrastructure/UnitOfWork.cs`
-
-**Apa benda ni?** Wrap DbContext dan Repository dengan transaction management.
-
-**Kenapa guna Unit of Work pattern?**
-- **Single SaveChanges** — semua operations save sekali gus, bukan save satu-satu
-- **Transaction control** — Begin → Commit/Rollback. Data integrity guaranteed
-- **Testable** — mock `IUnitOfWork` dalam unit tests
-
-```csharp
-public class UnitOfWork : IUnitOfWork
-{
-    private readonly AppDbContext _context;
-    private readonly ILogger<UnitOfWork> _logger;
-    private IDbContextTransaction? _transaction;   // Nullable — boleh ada atau takde
-
-    public IExchangeRateRepository ExchangeRates { get; }  // Expose repository
-
-    public async Task BeginTransactionAsync(CancellationToken cancellationToken)
+    services.AddApiVersioning(options =>
     {
-        _transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
-        _logger.LogDebug("UnitOfWork: Transaction started");
-    }
-
-    public async Task CommitAsync(CancellationToken cancellationToken)
+        options.AssumeDefaultVersionWhenUnspecified = true;   // Client lama masih boleh call
+        options.DefaultApiVersion = new ApiVersion(1, 0);     // Default = v1.0
+        options.ReportApiVersions = true;                     // Response header tunjuk supported versions
+        options.ApiVersionReader = new UrlSegmentApiVersionReader();  // Version dari URL path
+    })
+    .AddApiExplorer(setup =>
     {
-        if (_transaction is null) return;    // Guard — kalau takde transaction, skip
-        await _transaction.CommitAsync(cancellationToken);
-        _logger.LogDebug("UnitOfWork: Transaction committed");
-    }
-
-    public async Task RollbackAsync(CancellationToken cancellationToken)
-    {
-        if (_transaction is null) return;
-        await _transaction.RollbackAsync(cancellationToken);
-        _logger.LogWarning("UnitOfWork: Transaction rolled back");  // Warning — something went wrong
-    }
-
-    public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
-    {
-        var count = await _context.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("UnitOfWork: SaveChangesAsync persisted {Count} changes", count);
-        return count;
-    }
+        setup.GroupNameFormat = "'v'VVV";           // Format: v1, v2
+        setup.SubstituteApiVersionInUrl = true;     // Auto replace {version} dalam route
+    });
 }
 ```
 
-**Kenapa `Rollback` log sebagai Warning?**
-- Rollback bermakna sesuatu tak kena — sync gagal, exception berlaku
-- Ops team perlu tahu bila database rollback berlaku
+**Line-by-line explain:**
+- `AssumeDefaultVersionWhenUnspecified` — kalau call `/api/exchangerates` tanpa version, assume v1
+- `UrlSegmentApiVersionReader` — version dibaca dari URL path (bukan query string atau header)
+- `SubstituteApiVersionInUrl` — route `api/v{version:apiVersion}/...` auto jadi `api/v1/...`
+- `ReportApiVersions` — response header include `api-supported-versions: 1.0`
 
-**Kenapa `_transaction?` nullable?**
-- Tak semua operations guna transaction (contoh: simple query)
-- Guard `if (_transaction is null) return;` — elak NullReferenceException
+📂 `Api/Controllers/ExchangeRateController.cs`:
+```csharp
+[ApiVersion("1.0")]
+[Route("api/v{version:apiVersion}/exchangerates")]
+```
+- Controller di-tag sebagai version 1.0
+- Route template auto-resolve: `v{version:apiVersion}` → `v1`
+
+### Swagger Integration
+
+📂 `Api/Program.cs` — `ConfigureSwagger()`:
+```csharp
+foreach (var description in apiVersionDescriptionProvider.ApiVersionDescriptions)
+{
+    swagger.SwaggerDoc(description.GroupName, new OpenApiInfo
+    {
+        Title = "Unity Exchange Rates API",
+        Version = $"{description.ApiVersion}"
+    });
+}
+```
+- Loop setiap version → buat Swagger doc per version
+- Swagger UI ada dropdown untuk pilih version
+
+### Kelebihan
+1. **URL Segment** — paling clean dan readable
+2. **Auto Swagger** — new version auto appear dalam Swagger UI
+3. **Non-breaking** — V1 clients tak terkesan bila V2 direlease
+4. **Same pattern as Facility** — consistent approach
+
+### Macam Mana Nak Implement V2? (Panduan Masa Depan)
+
+Katakan nanti requirement berubah — V2 nak return response format baru (contoh: tambah field `lastUpdated`, ubah structure). Tapi V1 clients masih active. Caranya:
+
+#### Step 1 — Buat Controller Baru untuk V2
+
+📂 `Api/Controllers/ExchangeRateV2Controller.cs` **(NEW)**:
+```csharp
+[ApiController]
+[ApiVersion("2.0")]
+[Route("api/v{version:apiVersion}/exchange-rates")]
+public class ExchangeRateV2Controller : BaseApiController
+{
+    // Constructor sama macam V1
+
+    [HttpGet("{currency}")]
+    public async Task<IActionResult> GetRate(string currency, [FromQuery] string? date)
+    {
+        // V2: response format baru / logic baru
+        var query = new ExchangeRateV2Query { ... };
+        var result = await _mediator.Send(query);
+        return Ok(result);  // Format berbeza dari V1
+    }
+}
+```
+
+**V1 controller KEKAL MACAM SEDIA ADA** — langsung tak sentuh.
+
+#### Step 2 — Dua-dua Version Jalan Serentak
+
+```
+/api/v1/exchange-rates/usd    ← V1 clients (format lama)
+/api/v2/exchange-rates/usd    ← V2 clients (format baru)
+```
+
+ASP.NET auto-route ke controller yang betul berdasarkan `[ApiVersion]` attribute.
+
+#### Step 3 — Swagger Auto Detect
+
+Sebab `ConfigureSwagger()` loop semua versions:
+```csharp
+foreach (var description in apiVersionDescriptionProvider.ApiVersionDescriptions)
+    swagger.SwaggerDoc(description.GroupName, ...);
+```
+Swagger UI auto ada **dropdown**: `v1` dan `v2`. Developer boleh test kedua-dua.
+
+#### Step 4 — Deprecate V1 (Bila Dah Ready)
+
+Tukar attribute dalam V1 controller:
+```csharp
+[ApiVersion("1.0", Deprecated = true)]  // ← Tambah Deprecated = true
+```
+
+**Apa jadi?**
+- V1 **MASIH BOLEH dipanggil** — tak hilang, tak rosak
+- Response header: `api-deprecated-versions: 1.0`
+- Swagger UI tunjuk label **(deprecated)** pada V1 endpoints
+- Bagi masa client untuk migrate ke V2
+
+#### Step 5 — Remove V1 (Optional, Masa Depan)
+
+Bila semua clients dah migrate ke V2, baru delete `ExchangeRateController.cs` (V1).
+
+#### Struktur Folder Nanti
+
+```
+Controllers/
+├── ExchangeRateController.cs          ← V1 (kekal / deprecated)
+├── ExchangeRateV2Controller.cs        ← V2 (baru)
+└── Base/BaseApiController.cs          ← Shared base
+
+Service/Mediator/Queries/
+├── ExchangeRates/                     ← V1 handlers
+│   ├── ExchangeRateQuery.cs
+│   └── ExchangeRateQueryHandler.cs
+├── ExchangeRatesV2/                   ← V2 handlers (kalau logic berbeza)
+│   ├── ExchangeRateV2Query.cs
+│   └── ExchangeRateV2QueryHandler.cs
+└── Currencies/                        ← Shared (kedua-dua version guna)
+    ├── GetCurrenciesQuery.cs
+    └── GetCurrenciesQueryHandler.cs
+```
+
+#### Summary Versioning
+
+| Situasi | Action |
+|---------|--------|
+| Nak tambah V2 | Buat controller baru + `[ApiVersion("2.0")]` |
+| V1 masih active | **JANGAN SENTUH** V1 controller |
+| V1 nak deprecate | Tambah `Deprecated = true` pada V1 |
+| V1 nak remove | Delete controller HANYA bila semua client dah migrate |
+| Endpoint dikongsi (currencies) | Letak dalam V1 controller — V2 boleh inherit atau guna sama |
+
+**Sekarang infrastructure versioning dah 100% ready.** Bila nak buat V2, hanya perlu tambah controller + handler baru. Takde config tambahan.
 
 ---
 
-## 10. ExchangeRateRepository
+## 6 — Rate Limiting
 
-📂 **Path:** `src/Unity.ExchangeRates.Infrastructure/Repositories/ExchangeRateRepository.cs`
+### Apa?
+Hadkan bilangan request yang satu IP boleh buat dalam tempoh masa tertentu. Exceed = **429 Too Many Requests**.
 
+### Kenapa?
+- **Prevent abuse** — block bots/attackers yang spam API
+- **Protect resources** — database connection pool ada limit
+- **Fair usage** — semua client dapat share yang adil
+- **Production safety** — API akan digunakan Life Asia, kena protect
+
+### Macam Mana?
+
+Guna package **AspNetCoreRateLimit**.
+
+📂 `Api/Program.cs` — Lines 221-228:
+```csharp
+static void ConfigureRateLimit(IServiceCollection services, IConfiguration configuration)
+{
+    services.AddMemoryCache();                    // Counter simpan dalam RAM
+    services.Configure<IpRateLimitOptions>(       // Baca config dari appsettings
+        configuration.GetSection(nameof(IpRateLimitOptions)));
+    services.Configure<IpRateLimitPolicies>(
+        configuration.GetSection(nameof(IpRateLimitPolicies)));
+    services.AddInMemoryRateLimiting();           // In-memory counter
+    services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+}
+```
+
+📂 `Api/Program.cs` — Line 59 (Middleware):
+```csharp
+app.UseIpRateLimiting();  // Selepas API Key auth
+```
+
+**Kenapa selepas API Key auth?**
+- Request tanpa valid key dah kena reject oleh `ApiKeyAuthMiddleware`
+- Request yang sampai rate limiter = authenticated requests sahaja
+- Tak waste counter untuk invalid requests
+
+### Config
+
+📂 `appsettings.Development.json`:
+```json
+"IpRateLimitOptions": {
+    "EnableEndpointRateLimiting": true,
+    "HttpStatusCode": 429,
+    "RealIpHeader": "X-Real-Ip",
+    "QuotaExceededResponse": {
+        "Content": "{ \"status\": \"Failed\", \"errorCode\": \"00429\", \"errorMsg\": \"Quota exceeded. Maximum allowed: {0} per {1}.\" }",
+        "ContentType": "application/json",
+        "StatusCode": 429
+    },
+    "GeneralRules": [
+        { "Endpoint": "*", "Period": "1s", "Limit": 500 }
+    ]
+}
+```
+
+**Explain:**
+- `500 req/s per IP` — cukup untuk normal usage
+- `429` — standard HTTP code untuk "too many requests"
+- Custom JSON response — bukan blank error, client tahu apa masalah
+- `*` endpoint — apply ke SEMUA endpoints
+
+### Kelebihan
+1. **Config-driven** — tukar limit tanpa recompile
+2. **Per-IP** — setiap client ada limit sendiri
+3. **Custom response** — JSON format yang bermakna
+4. **In-memory** — zero latency overhead
+
+---
+
+## 7 — Audit Logging (Audit.NET)
+
+### Apa?
+Rekod setiap API request dan response sebagai audit trail — siapa call, bila, apa request, apa response.
+
+### Kenapa?
+- **Security** — trace unauthorized access attempts
+- **Compliance** — Life Asia (insurance) perlukan audit trail untuk regulatory
+- **Debugging** — check balik "request apa masuk, response apa keluar"
+- **Accountability** — setiap action ada rekod
+
+### Macam Mana?
+
+Event-driven pattern melalui Mediator — 6 class merentasi 4 layer:
+
+```
+Request masuk
+  → UseAuditLog() middleware capture request/response
+    → AuditLogEventDispatcher publish event via Mediator
+      → AuditLogEventHandler create AuditScope
+        → FileDataProvider tulis JSON ke audit-logs/
+```
+
+### Class-by-Class
+
+#### 1. Middleware Config
+
+📂 `Api/Configurations/AuditConfigurationBuilderExtensions.cs`:
+```csharp
+public static IApplicationBuilder UseAuditLog(this WebApplication builder)
+{
+    builder.UseAuditMiddleware(_ => _
+        .FilterByRequest(rq => !rq.Path.Value.EndsWith("favicon.ico"))  // Skip favicon
+        .WithEventType("{verb}:{url}")             // Contoh: "GET:/api/v1/exchangerates/usd/2026-02-28"
+        .IncludeHeaders()                          // Capture request headers
+        .IncludeResponseHeaders()                  // Capture response headers
+        .IncludeRequestBody()                      // Capture JSON body
+        .IncludeResponseBody(ctx =>
+            ctx.Response.StatusCode != 200));       // Response body HANYA kalau bukan 200
+
+    builder.Use(async (context, next) => {
+        context.Request.EnableBuffering();          // Allow multiple reads of request body
+        await next();
+    });
+
+    return builder;
+}
+```
+
+**Kenapa `EnableBuffering()`?** Request body stream hanya boleh dibaca SEKALI. Audit baca sekali, controller baca sekali — dua kali. Buffering allow multiple reads.
+
+**Kenapa response body hanya kalau bukan 200?** Jimat storage. Kalau 200 OK, data tu dah dalam database. Kalau error, PERLU simpan response untuk diagnosis.
+
+#### 2. Event Contracts (Domain Layer)
+
+📂 `Domain/Events/IEvent.cs`:
+```csharp
+public interface IEvent : INotification { }  // Base untuk semua domain events
+```
+
+📂 `Domain/Events/IAuditLogEvent.cs`:
+```csharp
+public interface IAuditLogEvent : IEvent
+{
+    string EventType { get; }      // "ExchangeRateSync"
+    string ReferenceId { get; }    // ID untuk trace
+    string Message { get; }        // "Rate synced successfully"
+    object Data { get; }           // Actual data object
+}
+```
+
+📂 `Domain/Events/AuditLogEvent.cs`:
+```csharp
+public class AuditLogEvent : IAuditLogEvent
+{
+    public string EventType => Data?.GetType().Name ?? "Unknown";  // Auto dari type name
+    // ... properties
+}
+```
+
+**Kenapa dalam Domain layer?** Domain = pure contracts, zero dependency. Mana-mana layer boleh reference.
+
+#### 3. Handler (Service Layer)
+
+📂 `Service/EventHandlers/AuditLogEventHandler.cs`:
+```csharp
+public async ValueTask Handle(AuditLogEvent notification, CancellationToken cancellationToken)
+{
+    using (var audit = await AuditScope.CreateAsync(notification.EventType, () => notification.Data))
+    {
+        audit.SetCustomField("ReferenceId", notification.ReferenceId);
+        audit.SetCustomField("IpAddress",
+            _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        audit.Comment(notification.Message);
+    }
+}
+```
+
+- `AuditScope` tulis JSON file automatik
+- Custom fields: `ReferenceId` dan `IpAddress` untuk tracing
+
+#### 4. Dispatcher (Shared Layer)
+
+📂 `Shared/Services/AuditLogEventDispatcher.cs`:
+```csharp
+public class AuditLogEventDispatcher : IAuditLogEventDispatcher
+{
+    private readonly IMediator _mediator;
+
+    public async Task DispatchAsync(IAuditLogEvent auditEvent)
+    {
+        await _mediator.Publish(auditEvent as INotification);  // Publish via Mediator
+    }
+}
+```
+
+#### 5. Data Provider Config
+
+📂 `Service/ServiceCollectionExtensions.cs`:
+```csharp
+Audit.Core.Configuration.DataProvider = new FileDataProvider(cfg => cfg.Directory("audit-logs"));
+services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+```
+
+- `FileDataProvider` → JSON files dalam `audit-logs/` folder
+- Production: boleh tukar ke database-based provider
+
+### Kelebihan
+1. **Automatic** — setiap request auto-captured tanpa code tambahan dalam controller
+2. **Event-driven** — decoupled dari business logic
+3. **Extensible** — tukar storage tanpa ubah handler
+4. **Traceable** — IP address, timestamp, request body — semua ada
+
+---
+
+## 8 — CORS Lock-down
+
+### Apa?
+CORS = Cross-Origin Resource Sharing. Kawal domain mana yang boleh call API kita dari browser.
+
+### Kenapa?
+- **Security** — prevent unauthorized websites dari call API
+- **Production safety** — hanya Life Asia domain yang dibenarkan
+- **Phase 2 hardening** — restrict dari "allow all" ke specific origins
+
+### Macam Mana?
+
+📂 `Api/Program.cs` — Lines 186-216:
+```csharp
+static void ConfigureCors(IWebHostEnvironment environment, IServiceCollection services, IConfiguration configuration)
+{
+    var corsOptions = configuration.GetSection(nameof(CorsOptions)).Get<CorsOptions>();
+
+    if (corsOptions == null)
+    {
+        if (environment.IsDevelopment())
+        {
+            // Dev mode: allow semua — senang development
+            builder.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+        }
+        else
+        {
+            // Production TANPA config = BLOCK! App tak start
+            throw new InvalidOperationException("Cors is not configured correctly in appsettings.");
+        }
+    }
+    else
+    {
+        // Production: hanya origins yang listed
+        builder.WithOrigins(corsOptions.Origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+    }
+}
+```
+
+**Kenapa `throw` kalau production takde config?**
+- Safety net — lebih baik app tak start dari terdedah tanpa CORS protection
+- Force DevOps team sediakan config sebelum deploy
+
+📂 `appsettings.Development.json`:
+```json
+"CorsOptions": {
+    "Origins": "#{CORS_ORIGINS}#"
+}
+```
+- `#{CORS_ORIGINS}#` — placeholder yang CI/CD pipeline replace dengan domain sebenar
+
+---
+
+## 9 — Unit of Work & Repository Pattern
+
+### Apa?
+
+Dua pattern yang bekerja bersama:
+- **Repository** — abstraction untuk data access (CRUD operations)
+- **Unit of Work** — wrap repository dengan transaction management
+
+### Kenapa Repository?
+- **Abstraction** — business logic tak tahu EF Core wujud
+- **Testable** — mock `IExchangeRateRepository` dalam unit tests
+- **Swappable** — boleh tukar dari EF Core ke Dapper tanpa sentuh handlers
+
+### Kenapa Unit of Work?
+- **Transaction** — semua operations save SERENTAK atau rollback SERENTAK
+- **Data integrity** — takde partial sync (separuh currency je masuk database)
+- **Centralized** — satu tempat untuk `SaveChanges`, `Commit`, `Rollback`
+
+### Repository Interface
+
+📂 `Repository/IExchangeRateRepository.cs`:
+```csharp
+public interface IExchangeRateRepository
+{
+    Task<List<Currency>> GetActiveCurrenciesAsync(CancellationToken ct);
+    Task<ExchangeRateHistory?> GetRateByCreatedDateAsync(string currencyCode, DateTime createdDate, CancellationToken ct);
+    Task AddRateHistoryAsync(ExchangeRateHistory history, CancellationToken ct);
+}
+```
+
+- 3 operations sahaja — keep interface focused
+- Return `Task` — semua async
+
+### Repository Implementation
+
+📂 `Infrastructure/Repositories/ExchangeRateRepository.cs`:
 ```csharp
 public async Task<ExchangeRateHistory?> GetRateByCreatedDateAsync(
     string currencyCode, DateTime createdDate, CancellationToken cancellationToken)
 {
+    _logger.LogDebug("Repository: GetRateByCreatedDateAsync for {CurrencyCode}, {CreatedDate}", ...);
+
     var history = await _context.ExchangeRateHistories
-        .FirstOrDefaultAsync(h => h.CurrencyCode == currencyCode 
-            && h.CreatedOn.Date == createdDate.Date, cancellationToken);
+        .FirstOrDefaultAsync(h =>
+            h.CurrencyCode == currencyCode &&
+            h.CreatedOn.Date == createdDate.Date,    // Compare DATE sahaja, ignore time
+            cancellationToken);
+
+    return history;
 }
 ```
 
-**Kenapa `CreatedOn.Date == createdDate.Date`?**
-- `.Date` buang time component — compare DATE sahaja, ignore masa
-- `CreatedOn` mungkin `2026-02-27 00:05:23`, tapi user query `2026-02-27` — kena match
+**Kenapa `CreatedOn.Date` bukan `RateDate`?**
+- `CreatedOn` = bila data disimpan (hari ni). `RateDate` = tarikh BNM
+- Weekend: 3 rows boleh ada same `RateDate` (Friday) tapi different `CreatedOn` (Sat/Sun/Mon)
+- User query "kadar hari ini" — bermaksud data yang di-sync hari ini = `CreatedOn`
 
-**Kenapa setiap method ada logger?**
-- **Debug level** — "method dipanggil" — untuk development troubleshooting
-- **Information level** — "jumpa 8 currencies" — business milestones
-- **Traceability** — boleh trace flow penuh dari controller → handler → repository
+### Unit of Work Interface
 
----
-
-## 11. EntitySaveChangeInterceptor
-
-📂 **Path:** `src/Unity.ExchangeRates.Infrastructure/Interceptors/EntitySaveChangeInterceptor.cs`
-
-**Apa benda ni?** EF Core interceptor — auto-set `CreatedOn` dan `ModifiedOn` setiap kali save.
-
-**Kenapa guna interceptor?**
-- **DRY** — tak perlu manual `entity.CreatedOn = DateTime.Now` dalam setiap handler
-- **Tak boleh miss** — setiap entity yang inherit `BaseEntity` auto-populated
-- **Audit trail** — setiap record ada timestamp bila created dan modified
-
+📂 `Repository/IUnitOfWork.cs`:
 ```csharp
-private void UpdateEntities(DbContext? context)
+public interface IUnitOfWork : IDisposable
 {
-    foreach (var entry in context.ChangeTracker.Entries<BaseEntity<int>>())
-    {
-        if (entry.State == EntityState.Added)
-            entry.Entity.CreatedOn = DateTime.Now;     // New record
+    IExchangeRateRepository ExchangeRates { get; }
+    Task<int> SaveChangesAsync(CancellationToken ct);
+    Task BeginTransactionAsync(CancellationToken ct);
+    Task CommitAsync(CancellationToken ct);
+    Task RollbackAsync(CancellationToken ct);
+}
+```
 
-        if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
-            entry.Entity.ModifiedOn = DateTime.Now;    // New or updated
+### Unit of Work Implementation
+
+📂 `Infrastructure/UnitOfWork.cs`:
+```csharp
+public class UnitOfWork : IUnitOfWork
+{
+    private readonly AppDbContext _context;
+    private IDbContextTransaction? _transaction;    // Nullable — boleh ada atau takde
+
+    public IExchangeRateRepository ExchangeRates { get; }
+
+    public async Task BeginTransactionAsync(CancellationToken ct)
+    {
+        _transaction = await _context.Database.BeginTransactionAsync(ct);
+        _logger.LogDebug("UnitOfWork: Transaction started");
+    }
+
+    public async Task SaveChangesAsync(CancellationToken ct)
+    {
+        var count = await _context.SaveChangesAsync(ct);
+        _logger.LogInformation("UnitOfWork: Persisted {Count} changes", count);
+    }
+
+    public async Task CommitAsync(CancellationToken ct)
+    {
+        if (_transaction is null) return;    // Guard — elak NullReferenceException
+        await _transaction.CommitAsync(ct);
+        _logger.LogDebug("UnitOfWork: Transaction committed");
+    }
+
+    public async Task RollbackAsync(CancellationToken ct)
+    {
+        if (_transaction is null) return;
+        await _transaction.RollbackAsync(ct);
+        _logger.LogWarning("UnitOfWork: Transaction rolled back");  // Warning — something wrong
     }
 }
 ```
 
-- `ChangeTracker.Entries<BaseEntity<int>>()` — scan SEMUA entities yang sedang di-track
-- `EntityState.Added` — baru masuk → set `CreatedOn` DAN `ModifiedOn`
-- `EntityState.Modified` — update existing → set `ModifiedOn` sahaja
+**Kenapa `RollbackAsync` log Warning?** Rollback bermakna exception berlaku — ops perlu tahu.
+
+### Flow Penggunaan dalam Sync Handler
+
+```csharp
+await _unitOfWork.BeginTransactionAsync(ct);          // 1. Mula transaction
+
+foreach (var curr in currencies)
+{
+    await _unitOfWork.ExchangeRates.AddRateHistoryAsync(history, ct);  // 2. Add data (belum save)
+}
+
+await _unitOfWork.SaveChangesAsync(ct);               // 3. Save semua serentak
+await _unitOfWork.CommitAsync(ct);                    // 4. Commit transaction
+
+// ATAU kalau error:
+await _unitOfWork.RollbackAsync(ct);                  // Undo semua
+```
+
+### Kelebihan
+1. **All-or-nothing** — semua currencies sync atau semua rollback
+2. **Single SaveChanges** — 8 currencies = 1 database call, bukan 8
+3. **Testable** — mock `IUnitOfWork` dalam tests
+4. **Logged** — setiap transaction action ada log entry
 
 ---
 
-## 12. ExchangeRateSyncJob
+## 10 — Validation Pipeline (FluentValidation)
 
-📂 **Path:** `src/Unity.ExchangeRates.Shared/Jobs/ExchangeRateSyncJob.cs`
+### Apa?
+Auto-validate setiap Command/Query SEBELUM handler jalan. Kalau input tak valid, handler LANGSUNG tak dipanggil.
 
-**Apa benda ni?** Hangfire background job — trigger setiap hari 12AM.
+### Kenapa?
+- **DRY** — validation tulis sekali, apply automatik
+- **Fail fast** — invalid input ditolak awal, jimat processing
+- **Readable** — rules dibaca macam English
+- **Testable** — unit test setiap rule secara terasing
+- **Separation** — validation logic terpisah dari business logic
 
+### Pipeline Behavior
+
+📂 `Service/Behaviors/RequestValidationBehavior.cs`:
+```csharp
+public class RequestValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+{
+    private readonly IEnumerable<IValidator<TRequest>> _validators;  // SEMUA validators untuk type ni
+
+    public async ValueTask<TResponse> Handle(TRequest message,
+        MessageHandlerDelegate<TRequest, TResponse> next, CancellationToken ct)
+    {
+        var context = new ValidationContext<TRequest>(message);
+
+        // Run SEMUA validators SERENTAK (parallel)
+        var validationResults = await Task.WhenAll(
+            _validators.Select(v => v.ValidateAsync(context, ct)));
+
+        var failures = validationResults.SelectMany(r => r.Errors)
+            .Where(f => f != null).ToList();
+
+        if (failures.Any())
+        {
+            _logger.LogWarning("Validation Error: {@errors}", errors);
+            return new TResponse().WithErrors(errors);  // STOP — handler tak dipanggil
+        }
+
+        return await next(message, ct);  // Valid — teruskan ke handler
+    }
+}
+```
+
+**Kenapa `IPipelineBehavior`?** Macam middleware untuk Mediator. Intercept setiap request sebelum handler.
+
+**Kenapa `Task.WhenAll`?** Run semua validators serentak — performance. Kalau ada 3 validators, jalan parallel.
+
+### Session Config Validator
+
+📂 `Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandValidator.cs`:
+```csharp
+public sealed class ExchangeRateSyncCommandValidator : AbstractValidator<ExchangeRateSyncCommand>
+{
+    private static readonly HashSet<string> ValidSessions = new() { "0900", "1130", "1200", "1700" };
+
+    public ExchangeRateSyncCommandValidator()
+    {
+        RuleFor(c => c.date)
+            .NotEmpty().WithErrorCode("00400").WithMessage("Date is required.")
+            .Matches(@"^\d{4}-\d{2}-\d{2}$").WithErrorCode("00400")
+            .WithMessage("Date must be in yyyy-MM-dd format.");
+
+        RuleFor(c => c.session)
+            .Must(s => ValidSessions.Contains(s!))
+            .When(c => !string.IsNullOrEmpty(c.session))    // Validate HANYA kalau provided
+            .WithErrorCode("00400")
+            .WithMessage("Session must be one of: 0900, 1130, 1200, 1700.");
+    }
+}
+```
+
+### Session Values — Apa Maksud?
+
+| Session | Masa | Makna |
+|---------|------|-------|
+| `0900` | 9:00 AM | Opening rate (pagi) |
+| `1130` | 11:30 AM | Mid-morning rate |
+| `1200` | 12:00 PM | Noon rate |
+| `1700` | 5:00 PM | **Closing rate** (petang) |
+
+**Kenapa default `1700`?** Closing rate paling stabil — reflect pergerakan sepanjang hari. Config dalam `BnmApiSettings.DefaultSession`.
+
+**Kenapa session optional?** Kalau tak provide, handler guna default dari config. Ini flexible — Hangfire job tak specify session, auto guna 1700.
+
+**Kenapa `HashSet` bukan `List`?** `HashSet.Contains()` = O(1) constant time vs `List.Contains()` = O(n) linear. Lebih efficient.
+
+### DI Registration
+
+📂 `Service/ServiceCollectionExtensions.cs`:
+```csharp
+ValidatorOptions.Global.DefaultRuleLevelCascadeMode = CascadeMode.Stop;    // First error stops
+ValidatorOptions.Global.DefaultClassLevelCascadeMode = CascadeMode.Stop;
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(RequestValidationBehavior<,>));
+services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());        // Auto-discover
+```
+
+- `CascadeMode.Stop` — kalau rule pertama fail, stop. Tak run rules seterusnya
+- `AddValidatorsFromAssembly` — scan assembly, auto-register SEMUA validators
+
+---
+
+## 11 — Background Jobs (Hangfire)
+
+### Apa?
+Hangfire = library untuk scheduled background jobs. Dalam projek ni, dia trigger daily sync setiap tengah malam.
+
+### Kenapa Hangfire?
+- **Persistent** — job state simpan dalam SQL Server, survive app restart
+- **Dashboard** — web UI untuk monitor jobs
+- **Retry** — auto-retry kalau job fail
+- **Cron** — flexible scheduling
+
+### Config
+
+📂 `Shared/ServiceCollectionExtensions.cs`:
+```csharp
+services.AddHangfire(config =>
+    config.UseSqlServerStorage(configuration.GetConnectionString("DefaultConnection")));
+services.AddHangfireServer();
+services.AddScoped<IExchangeRateSyncJob, ExchangeRateSyncJob>();
+```
+
+📂 `Api/Program.cs` — Lines 87-91:
+```csharp
+RecurringJob.AddOrUpdate<IExchangeRateSyncJob>(
+    "daily-exchange-rate-sync",                           // Job ID
+    job => job.SyncDailyAsync(CancellationToken.None),    // Method to call
+    "0 0 * * *",                                          // Cron: setiap hari 12:00AM
+    new RecurringJobOptions { TimeZone = TimeZoneInfo.Local });  // Ikut timezone server
+```
+
+Cron `0 0 * * *` = minit 0, jam 0, setiap hari, setiap bulan, setiap hari minggu = **12AM daily**.
+
+### Job Implementation
+
+📂 `Shared/Jobs/ExchangeRateSyncJob.cs`:
 ```csharp
 public async Task SyncDailyAsync(CancellationToken cancellationToken = default)
 {
     try
     {
-        var now = DateTime.Now;
-        var yesterday = now.Date.AddDays(-1).ToString("yyyy-MM-dd");
+        var yesterday = DateTime.Now.Date.AddDays(-1).ToString("yyyy-MM-dd");
 
-        _logger.LogInformation("Hangfire SyncDaily: Starting. Now={Now}, TargetDate={Target}", now, yesterday);
+        _logger.LogInformation("Hangfire SyncDaily: Starting. TargetDate={Target}", yesterday);
 
         var command = new ExchangeRateSyncCommand { date = yesterday };
         var result = await _mediator.Send(command, cancellationToken);
 
         if (result.IsFailed)
-            _logger.LogError("Sync failed for {Target}. Errors={Errors}", yesterday, ...);
+            _logger.LogError("Sync failed for {Target}. Errors={Errors}", ...);
         else
             _logger.LogInformation("Sync succeeded for {Target}.", yesterday);
     }
@@ -857,109 +1201,342 @@ public async Task SyncDailyAsync(CancellationToken cancellationToken = default)
 }
 ```
 
-**Kenapa yesterday?** Job run 12AM → BNM dah publish rate 5PM semalam → kita ambil semalam punya
+**Kenapa yesterday?** Job run 12AM hari ni → BNM dah publish rate 5PM semalam → ambil semalam punya.
 
-**Kenapa `LogCritical`?** Job crash = data TAKDE untuk hari tu = production issue. `Critical` = highest severity
+**Kenapa Mediator.Send?** Reuse EXACT SAME handler. POST endpoint dan Hangfire guna handler yang sama — zero duplication.
 
-**Kenapa guna Mediator, bukan direct call?** Reuse exact same handler — zero code duplication. POST endpoint dan Hangfire job guna handler yang sama.
+**Kenapa `LogCritical`?** Job crash = data TAKDE untuk hari tu = critical production issue.
 
----
+### Weekend Logic
 
-## 13. AuditConfigurationBuilderExtensions
-
-📂 **Path:** `src/Unity.ExchangeRates.Api/Configurations/AuditConfigurationBuilderExtensions.cs`
-
-Sudah detail dalam Bahagian 6 di atas. Extension method untuk `UseAuditLog()` yang capture request/response untuk audit trail menggunakan `Audit.WebApi` library.
-
----
-
-## 14. Audit Events
-
-Sistem audit event menggunakan event-driven pattern melalui Mediator:
-
-| # | File | Path | Fungsi |
-|---|------|------|--------|
-| 1 | `IEvent.cs` | `Domain/Events/` | Base interface — extends Mediator's `INotification` |
-| 2 | `IAuditLogEvent.cs` | `Domain/Events/` | Contract: `EventType`, `ReferenceId`, `Message`, `Data` |
-| 3 | `AuditLogEvent.cs` | `Domain/Events/` | Concrete class. `EventType` auto dari `Data.GetType().Name` |
-| 4 | `IAuditLogEventDispatcher.cs` | `Service/Services/` | Dispatcher interface |
-| 5 | `AuditLogEventHandler.cs` | `Service/EventHandlers/` | Handle event → buat `AuditScope` → tulis ke file |
-| 6 | `AuditLogEventDispatcher.cs` | `Shared/Services/` | Publish event via Mediator |
-
-**Kenapa pattern ni? Kenapa tak direct write?**
-- **Decoupled** — business code tak tahu macam mana audit ditulis (file? database? cloud?)
-- **Extensible** — nak tukar dari file ke database? Tukar `DataProvider` je, handler sama
-- **Testable** — mock dispatcher dalam tests
-- **Same pattern as Facility** — consistent across projek
+| Job Run | Yesterday | ResolveBusinessDate | Rate |
+|---------|-----------|-------------------|------|
+| Selasa 12AM | Isnin | Isnin ✅ | Isnin 1700 |
+| Sabtu 12AM | Jumaat | Jumaat ✅ | Jumaat 1700 |
+| Ahad 12AM | Sabtu → | **Jumaat** | Jumaat 1700 |
+| Isnin 12AM | Ahad → | **Jumaat** | Jumaat 1700 |
 
 ---
 
-## 15. LogMethodNameEnricher
+## 12 — HTTP Client & Resilience (Polly)
 
-📂 **Path:** `src/Unity.ExchangeRates.Api/Configurations/Logging/LogMethodNameEnricher.cs`
+### Apa?
+BNM API client guna **HttpClientFactory** dengan **Polly retry policy** — kalau BNM down sementara, auto retry.
 
-**Apa benda ni?** Custom Serilog enricher — tambah nama method dalam setiap log entry automatik.
+### Kenapa HttpClientFactory?
+- **Connection pool** — reuse connections, avoid socket exhaustion
+- **Named clients** — pre-configured dengan BaseURL, headers, timeout
+- **Lifetime management** — factory handle HttpClient lifecycle
 
-**Kenapa buat custom enricher?**
-- Default Serilog hanya log `SourceContext` (class name)
-- Dengan enricher ni, setiap log ada method name — senang trace "log ni datang dari function mana"
+### Kenapa Polly?
+- **Resilience** — BNM boleh down sementara (maintenance, network)
+- **Transient errors** — HTTP 500, 503, timeout — biasanya recover sendiri
+- **Auto retry** — developer tak perlu tulis retry logic manual
 
-**Didaftarkan dalam** `ConfigureLog()` di `Program.cs`:
+### Implementation
+
+📂 `Shared/ServiceCollectionExtensions.cs`:
 ```csharp
-config.Enrich.WithMethodName();
+services.AddHttpClient("BnmClient", (serviceProvider, client) =>
+{
+    var settings = serviceProvider
+        .GetRequiredService<IOptions<BnmApiOptions>>().Value;
+
+    client.BaseAddress = new Uri(settings.BaseUrl.TrimEnd('/') + '/');
+    client.DefaultRequestHeaders.Add("Accept", settings.AcceptHeader);
+    client.Timeout = TimeSpan.FromSeconds(10);
+})
+.AddPolicyHandler(BuildRetryPolicy());
+
+private static IAsyncPolicy<HttpResponseMessage> BuildRetryPolicy()
+{
+    return HttpPolicyExtensions
+        .HandleTransientHttpError()       // Handle 5xx and 408 errors
+        .WaitAndRetryAsync(new[]
+        {
+            TimeSpan.FromSeconds(1),      // 1st retry: tunggu 1 saat
+            TimeSpan.FromSeconds(2),      // 2nd retry: tunggu 2 saat
+            TimeSpan.FromSeconds(5)       // 3rd retry: tunggu 5 saat
+        });
+}
 ```
 
+**Retry pattern:** Wait 1s → retry → wait 2s → retry → wait 5s → retry → give up.
+
+**Kenapa increasing delays?** Give server time to recover. Kalau server overloaded, retry immediately akan tambah beban.
+
 ---
 
-## 16. ServiceCollectionExtensions — DI Registration
+## 13 — Global Error Handling
 
-### Service Layer
+### Apa?
+Middleware yang catch SEMUA unhandled exceptions dan return proper JSON response.
 
-📂 **Path:** `src/Unity.ExchangeRates.Service/ServiceCollectionExtensions.cs`
+### Kenapa?
+- **DRY** — tulis sekali, cover semua endpoint
+- **Consistent** — semua error return same JSON format
+- **Safe** — user tak nampak stack trace (security risk)
+- **Categorized** — different log levels untuk different error types
+
+### Implementation
+
+📂 `Api/Middlewares/ExceptionHandlerMiddleware.cs`:
+```csharp
+public async Task Invoke(HttpContext context)
+{
+    try
+    {
+        await _next(context);  // Cuba jalankan request
+    }
+    catch (Exception error)
+    {
+        switch (error)
+        {
+            case ExchangeRatesDomainException:
+                _logger.LogWarning(...);                       // Expected — business rule violation
+                response.StatusCode = 400;                     // Bad Request
+                break;
+
+            case ValidationException e:
+                _logger.LogWarning(...);                       // Expected — input tak valid
+                response.StatusCode = 400;
+                resultObject.message = e.Errors.First()...;   // First error message
+                break;
+
+            default:
+                _logger.LogError(...);                         // Unexpected — real error!
+                response.StatusCode = 500;                     // Internal Server Error
+                break;
+        }
+
+        await response.WriteAsync(resultObject.ToString());   // JSON response
+    }
+}
+```
+
+**Kenapa Warning untuk domain/validation errors?**
+- Bukan error sebenar — user hantar input salah, itu NORMAL
+- `LogError` reserved untuk benda yang betul-betul salah
+- Ops team monitor Error level — tak nak banjir dengan false alarms
+
+---
+
+## 14 — EF Core Interceptor — Auto Audit Fields
+
+### Apa?
+Interceptor yang auto-set `CreatedOn` dan `ModifiedOn` setiap kali `SaveChanges()` dipanggil.
+
+### Kenapa?
+- **DRY** — tak perlu manual `entity.CreatedOn = DateTime.Now` dalam setiap handler
+- **Foolproof** — developer tak boleh lupa set timestamp
+- **Audit trail** — setiap record ada timestamp bila created/modified
+
+### Implementation
+
+📂 `Infrastructure/Interceptors/EntitySaveChangeInterceptor.cs`:
+```csharp
+private void UpdateEntities(DbContext? context)
+{
+    foreach (var entry in context.ChangeTracker.Entries<BaseEntity<int>>())
+    {
+        if (entry.State == EntityState.Added)
+            entry.Entity.CreatedOn = DateTime.Now;          // New record → set CreatedOn
+
+        if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
+            entry.Entity.ModifiedOn = DateTime.Now;         // New or updated → set ModifiedOn
+    }
+}
+```
+
+- `ChangeTracker.Entries<BaseEntity<int>>()` — scan SEMUA tracked entities
+- `EntityState.Added` → baru masuk → set BOTH CreatedOn dan ModifiedOn
+- `EntityState.Modified` → update → set ModifiedOn sahaja
+- Run untuk KEDUA-DUA `BaseEntity<int>` dan `BaseEntity<string>` (Currency guna string key)
+
+---
+
+## 15 — Business Logic — Sync Flow
+
+### Apa?
+Core handler yang fetch kadar dari BNM API dan simpan ke database.
+
+📂 `Service/Mediator/Commands/ExchangeRates/ExchangeRateSyncCommandHandler.cs`
+
+### Complete Flow
+
+```
+1. Parse date input (yyyy-MM-dd)
+2. ResolveBusinessDate() — weekend → Friday
+3. Determine session (provided or default 1700)
+4. Load active currencies dari database
+5. Begin database transaction
+6. Loop setiap currency:
+   a. Build BNM API URL
+   b. Call BNM API (with Polly retry)
+   c. Parse JSON response
+   d. Create ExchangeRateHistory entity
+   e. Add to database context
+7. SaveChanges (batch — semua serentak)
+8. Commit transaction
+9. Return result "Synced X of Y currencies"
+```
+
+### ResolveBusinessDate
 
 ```csharp
-// Audit.NET data provider — tulis audit logs ke folder
+private static DateTime ResolveBusinessDate(DateTime date)
+{
+    while (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+        date = date.AddDays(-1);    // Tolak satu hari
+    return date;
+}
+```
+
+- `static` — pure function, tak perlu instance state
+- `while` loop — handle Saturday (→ Friday) DAN Sunday (→ Saturday → Friday)
+- **Kenapa?** BNM tak publish rate pada weekend
+
+### Error Handling dalam Loop
+
+```csharp
+if (!response.IsSuccessStatusCode)
+{
+    _logger.LogError("Failed to fetch {currency}. BNM returned {StatusCode}", ...);
+    continue;  // Skip, teruskan currency seterusnya
+}
+```
+
+**Kenapa `continue` bukan `throw`?**
+- Kalau JPY fail tapi USD ok, kita masih nak sync USD
+- **Partial sync lebih baik dari total failure**
+- Log record mana yang fail — boleh investigate kemudian
+
+### Transaction Rollback
+
+```csharp
+catch (Exception ex)
+{
+    await _unitOfWork.RollbackAsync(cancellationToken);    // Undo SEMUA
+    _logger.LogError(ex, "Transaction rolled back.");
+    return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = ex.Message });
+}
+```
+
+- Database crash, network error → rollback ALL data yang dah add
+- **Data integrity** — takde partial/corrupt data dalam database
+
+---
+
+## 16 — Dependency Injection Registration
+
+### Apa?
+Setiap layer register services dia sendiri. `Program.cs` panggil registration method dari setiap layer.
+
+### Kenapa Multi-Layer Registration?
+
+📂 `Api/Program.cs` — Lines 29-31:
+```csharp
+builder.Services.RegisterServiceModule(builder.Configuration);
+builder.Services.RegisterInfrastructureModule(builder.Configuration);
+builder.Services.RegisterSharedServiceModule(builder.Configuration);
+```
+
+- **Encapsulation** — setiap layer tahu apa yang dia perlu register
+- **Maintainability** — tambah service baru? Ubah satu file je dalam layer tu
+- **Clean Program.cs** — tak banjir dengan registrations
+
+### Service Layer Registration
+
+📂 `Service/ServiceCollectionExtensions.cs`:
+```csharp
+// Audit.NET — simpan audit ke file
 Audit.Core.Configuration.DataProvider = new FileDataProvider(cfg => cfg.Directory("audit-logs"));
 
-// IHttpContextAccessor — access HttpContext dari luar controller
+// IHttpContextAccessor — access HTTP context dari luar controller
 services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
-// FluentValidation — cascade mode Stop (first error stops)
+// Validation pipeline
 ValidatorOptions.Global.DefaultRuleLevelCascadeMode = CascadeMode.Stop;
-
-// Mediator pipeline behavior — validation behavior
 services.AddTransient(typeof(IPipelineBehavior<,>), typeof(RequestValidationBehavior<,>));
-
-// Auto-discover dan register SEMUA validators dalam assembly
 services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
 
-// BNM API settings — bind dari appsettings ke strongly-typed class
+// BNM API config
 services.Configure<BnmApiOptions>(configuration.GetSection("BnmApiSettings"));
 ```
 
-### Shared Layer
+### Shared Layer Registration
 
-📂 **Path:** `src/Unity.ExchangeRates.Shared/ServiceCollectionExtensions.cs`
-
+📂 `Shared/ServiceCollectionExtensions.cs`:
 ```csharp
-// Audit dispatcher — publish events through Mediator
+// Audit dispatcher
 services.AddScoped<IAuditLogEventDispatcher, AuditLogEventDispatcher>();
 
-// BNM HTTP client — named client dengan retry policy
-services.AddHttpClient("BnmClient", ...)
-    .AddPolicyHandler(BuildRetryPolicy());  // Polly: 3 retries (1s, 2s, 5s)
+// BNM HTTP client dengan retry
+services.AddHttpClient("BnmClient", ...).AddPolicyHandler(BuildRetryPolicy());
 
-// Hangfire — background job processing
+// Hangfire
 services.AddHangfire(config => config.UseSqlServerStorage(...));
 services.AddHangfireServer();
 services.AddScoped<IExchangeRateSyncJob, ExchangeRateSyncJob>();
 ```
 
-**Kenapa `AddScoped` untuk dispatcher dan job?**
-- Scoped = satu instance per HTTP request / per Hangfire job execution
-- Setiap request dapat fresh instance — tak share state antara requests
+### Service Lifetimes
 
-**Kenapa Polly retry?**
-- BNM API boleh down sementara (maintenance, network issue)
-- Retry 3 kali: tunggu 1s → 2s → 5s sebelum give up
-- **Resilience** — kalau BNM down 2 saat, retry auto cover tanpa manual intervention
+| Lifetime | Maksud | Contoh |
+|----------|--------|--------|
+| **Singleton** | 1 instance untuk keseluruhan app | `IHttpContextAccessor`, `IRateLimitConfiguration` |
+| **Scoped** | 1 instance per HTTP request | `UnitOfWork`, `Repository`, `AuditLogEventDispatcher` |
+| **Transient** | Instance baru setiap kali diperlukan | `RequestValidationBehavior` |
+
+---
+
+## 17 — Configuration (appsettings)
+
+📂 `Api/appsettings.Development.json`
+
+| Section | Tujuan | Contoh Value |
+|---------|--------|-------------|
+| `ConnectionStrings` | Database connection | `(localdb)\MSSQLLocalDB` |
+| `BnmApiSettings.BaseUrl` | BNM API URL | `https://api.bnm.gov.my` |
+| `BnmApiSettings.DefaultSession` | Default trading session | `1700` |
+| `Serilog` | Log config | Level, WriteTo, Rolling |
+| `ApiSecurity.ApiKey` | Development API key | `dev-unity-exchangerates-key-2026` |
+| `CorsOptions.Origins` | Allowed domains | `#{CORS_ORIGINS}#` (CI/CD replace) |
+| `IpRateLimitOptions` | Rate limit rules | 500 req/s per IP |
+
+**Kenapa semua config-driven?** Tukar behavior tanpa recompile. Environment berbeza (dev/staging/prod) guna appsettings berbeza.
+
+---
+
+## 📋 Quick Reference — Semua NuGet Packages
+
+| Package | Version | Kegunaan |
+|---------|---------|---------|
+| `Asp.Versioning.Mvc` | 8.1.0 | API versioning |
+| `Asp.Versioning.Mvc.ApiExplorer` | 8.1.0 | Swagger version discovery |
+| `AspNetCoreRateLimit` | 5.0.0 | Rate limiting |
+| `Audit.NET` | 21.0.0 | Audit logging core |
+| `Audit.WebApi.Core` | 21.0.0 | Audit middleware for ASP.NET |
+| `Serilog` | - | Structured logging |
+| `FluentValidation` | - | Input validation |
+| `Mediator` | - | CQRS pattern |
+| `Hangfire` | - | Background jobs |
+| `Polly` | - | Retry/resilience |
+| `AutoMapper` | - | Object mapping |
+
+---
+
+## 📋 Quick Reference — Middleware Pipeline Order
+
+```
+Request masuk
+  → 1. ExceptionHandlerMiddleware     (catch semua exception)
+  → 2. ApiKeyAuthMiddleware           (validate X-Api-Key)
+  → 3. IpRateLimiting                 (check request quota)
+  → 4. UseHttpsRedirection            (force HTTPS)
+  → 5. UseCors                        (check allowed origins)
+  → 6. UseAuditLog                    (capture request/response)
+  → 7. UseAuthorization               (ASP.NET auth)
+  → 8. Controller                     (handle request)
+Response keluar ←
+```
