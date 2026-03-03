@@ -27,9 +27,13 @@ namespace Unity.ExchangeRates.Infrastructure.Data
             {
                 b.HasKey(e => e.Id);
                 b.Property(e => e.Id)
-                 .HasColumnName("CurrencyCode")
+                 .HasColumnName("CurrencyId")
+                 .ValueGeneratedOnAdd();
+                b.Property(e => e.CurrencyCode)
                  .HasMaxLength(10)
                  .IsRequired();
+                b.HasIndex(e => e.CurrencyCode)
+                 .IsUnique();
                 b.Property(e => e.CurrencyName)
                  .HasMaxLength(100)
                  .IsRequired();
@@ -45,6 +49,10 @@ namespace Unity.ExchangeRates.Infrastructure.Data
                 b.Property(e => e.BuyingRate).HasColumnType("decimal(18,4)");
                 b.Property(e => e.SellingRate).HasColumnType("decimal(18,4)");
                 b.Property(e => e.MiddleRate).HasColumnType("decimal(18,4)");
+                b.HasOne(e => e.Currency)
+                 .WithMany()
+                 .HasForeignKey(e => e.CurrencyId)
+                 .OnDelete(DeleteBehavior.Restrict);
                 b.ToTable("ExchangeRateHistory");
             });
         }

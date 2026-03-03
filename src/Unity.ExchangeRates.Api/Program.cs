@@ -55,7 +55,6 @@ ConfigureSwagger(builder.Services);
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionHandlerMiddleware>();
-app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.UseIpRateLimiting();
 
 if (app.Environment.IsDevelopment())
@@ -127,7 +126,7 @@ static void ConfigureApiVersioning(IServiceCollection services)
 }
 
 // ============================================================
-// Swagger Configuration (versioned docs + API Key support)
+// Swagger Configuration (versioned docs)
 // ============================================================
 static void ConfigureSwagger(IServiceCollection services)
 {
@@ -151,32 +150,6 @@ static void ConfigureSwagger(IServiceCollection services)
             }
             swagger.SwaggerDoc(description.GroupName, apiInfo);
         }
-
-        // API Key header for Swagger UI "Authorize" button
-        swagger.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
-        {
-            Description = "API Key authentication using the X-Api-Key header",
-            Type = SecuritySchemeType.ApiKey,
-            Name = "X-Api-Key",
-            In = ParameterLocation.Header,
-            Scheme = "ApiKeyScheme"
-        });
-
-        swagger.AddSecurityRequirement(new OpenApiSecurityRequirement
-        {
-            {
-                new OpenApiSecurityScheme
-                {
-                    Reference = new OpenApiReference
-                    {
-                        Type = ReferenceType.SecurityScheme,
-                        Id = "ApiKey"
-                    },
-                    In = ParameterLocation.Header
-                },
-                new List<string>()
-            }
-        });
     });
 }
 

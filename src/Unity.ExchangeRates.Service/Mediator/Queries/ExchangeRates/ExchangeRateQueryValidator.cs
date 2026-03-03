@@ -6,11 +6,6 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
     {
         public ExchangeRateQueryValidator()
         {
-            RuleFor(c => c.currency)
-                .NotEmpty()
-                .WithErrorCode("00400")
-                .WithMessage("Currency is required.");
-
             RuleFor(c => c.date)
                 .NotEmpty()
                 .WithErrorCode("00400")

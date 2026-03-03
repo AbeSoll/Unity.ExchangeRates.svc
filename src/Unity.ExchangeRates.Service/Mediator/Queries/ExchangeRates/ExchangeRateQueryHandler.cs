@@ -25,11 +25,35 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
         {
             try
             {
+                var createdDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+                // If no currency specified — return ALL rates for the date
+                if (string.IsNullOrEmpty(request.currency))
+                {
+                    _logger.LogDebug("ExchangeRateQueryHandler: Fetching ALL rates for date={date}", request.date);
+
+                    var histories = await _repository.GetAllRatesByDateAsync(createdDate, cancellationToken);
+
+                    if (histories.Count == 0)
+                    {
+                        _logger.LogWarning("ExchangeRateQueryHandler: No rates found for date={date}", request.date);
+                        return Result.Fail(new NotFoundError()
+                        {
+                            errorCode = "00404",
+                            errorMsg = $"No exchange rate data found for {request.date}."
+                        });
+                    }
+
+                    _logger.LogInformation("ExchangeRateQueryHandler: Retrieved {Count} rates for date={date}", histories.Count, request.date);
+
+                    return new BaseResult() { data = histories };
+                }
+
+                // Single currency
                 _logger.LogDebug("ExchangeRateQueryHandler: Querying DB for currency={currency}, date={date}",
                     request.currency, request.date);
 
-                var createdDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-                var history = await _repository.GetRateByCreatedDateAsync(request.currency!, createdDate, cancellationToken);
+                var history = await _repository.GetRateByCreatedDateAsync(request.currency, createdDate, cancellationToken);
 
                 if (history is null)
                 {
@@ -57,4 +81,4 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
             }
         }
     }
- }
+}

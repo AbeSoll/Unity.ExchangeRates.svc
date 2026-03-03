@@ -4,19 +4,11 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Unity.ExchangeRates.Domain.Models
 {
     [Table("Currency")]
-    public class Currency : BaseEntity<string>
+    public class Currency : BaseEntity<int>
     {
-        [Key]
-        [Column("CurrencyCode")]
+        [Required]
         [StringLength(10)]
-        public override required string Id { get; set; }
-
-        [NotMapped]
-        public string CurrencyCode
-        {
-            get => Id;
-            set => Id = value;
-        }
+        public required string CurrencyCode { get; set; }
 
         [Required]
         [StringLength(100)]

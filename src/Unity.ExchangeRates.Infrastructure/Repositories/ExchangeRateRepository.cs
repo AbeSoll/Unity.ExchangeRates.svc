@@ -38,6 +38,17 @@ namespace Unity.ExchangeRates.Infrastructure.Repositories
             return history;
         }
 
+        public async Task<List<ExchangeRateHistory>> GetAllRatesByDateAsync(DateTime createdDate, CancellationToken cancellationToken)
+        {
+            _logger.LogDebug("Repository: GetAllRatesByDateAsync for CreatedDate={CreatedDate}", createdDate);
+            var histories = await _context.ExchangeRateHistories
+                .Where(h => h.CreatedOn.Date == createdDate.Date)
+                .OrderBy(h => h.CurrencyCode)
+                .ToListAsync(cancellationToken);
+            _logger.LogInformation("Repository: GetAllRatesByDateAsync returned {Count} rates for {CreatedDate}", histories.Count, createdDate);
+            return histories;
+        }
+
         public async Task AddRateHistoryAsync(ExchangeRateHistory history, CancellationToken cancellationToken)
         {
             _logger.LogDebug("Repository: AddRateHistoryAsync for CurrencyCode={CurrencyCode}, RateDate={RateDate}",

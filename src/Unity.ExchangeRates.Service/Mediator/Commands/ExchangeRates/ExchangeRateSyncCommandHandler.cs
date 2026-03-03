@@ -54,17 +54,17 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                 foreach (var curr in currencies)
                 {
                     var path = _settings.Endpoints["ExchangeRate"];
-                    var url = $"{path}/{curr.Id}/date/{targetDateStr}?session={session}&quote=rm";
+                    var url = $"{path}/{curr.CurrencyCode}/date/{targetDateStr}?session={session}&quote=rm";
 
                     _logger.LogDebug("ExchangeRateSyncCommandHandler: Calling BNM API for currency={currency}, date={date}, url={url}",
-                        curr.Id, targetDateStr, url);
+                        curr.CurrencyCode, targetDateStr, url);
 
                     var response = await _httpClient.GetAsync(url, cancellationToken);
 
                     if (!response.IsSuccessStatusCode)
                     {
                         _logger.LogError("ExchangeRateSyncCommandHandler: Failed to fetch {currency} for {date}. BNM API returned {StatusCode}",
-                            curr.Id, targetDateStr, response.StatusCode);
+                            curr.CurrencyCode, targetDateStr, response.StatusCode);
                         continue;
                     }
 
@@ -73,7 +73,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                     if (bnmData?.Data?.Rate is null)
                     {
                         _logger.LogError("ExchangeRateSyncCommandHandler: Failed to fetch {currency} for {date}. BNM returned empty data",
-                            curr.Id, targetDateStr);
+                            curr.CurrencyCode, targetDateStr);
                         continue;
                     }
 
@@ -81,7 +81,8 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                     var history = new ExchangeRateHistory
                     {
                         Id = 0,
-                        CurrencyCode = curr.Id,
+                        CurrencyId = curr.Id,
+                        CurrencyCode = curr.CurrencyCode,
                         RateDate = targetDate,
                         EffectiveDate = targetDate,
                         BuyingRate = rateData.Rate?.BuyingRate ?? 0,
@@ -115,7 +116,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
         }
 
         /// <summary>
-        /// BNM only publishes rates on business days (Mon–Fri)
+        /// BNM only publishes rates on business days (Mon-Fri)
         /// If the date falls on Saturday or Sunday, resolve to the previous Friday
         /// </summary>
         private static DateTime ResolveBusinessDate(DateTime date)

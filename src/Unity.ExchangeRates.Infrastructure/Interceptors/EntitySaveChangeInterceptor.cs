@@ -34,19 +34,6 @@ namespace Unity.ExchangeRates.Infrastructure.Interceptors
                     entry.Entity.ModifiedOn = DateTime.Now;
                 }
             }
-
-            foreach (var entry in context.ChangeTracker.Entries<BaseEntity<string>>())
-            {
-                if (entry.State == EntityState.Added)
-                {
-                    entry.Entity.CreatedOn = DateTime.Now;
-                }
-
-                if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
-                {
-                    entry.Entity.ModifiedOn = DateTime.Now;
-                }
-            }
         }
     }
 }

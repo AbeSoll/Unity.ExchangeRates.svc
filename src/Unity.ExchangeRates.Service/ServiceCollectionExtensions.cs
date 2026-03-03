@@ -18,8 +18,9 @@ namespace Unity.ExchangeRates.Service
                 .AddService(configuration)
                 .AddAppSettings(configuration);
 
-            // Audit.NET file data provider
-            Audit.Core.Configuration.DataProvider = new FileDataProvider(cfg => cfg.Directory("audit-logs"));
+            // Audit.NET file data provider — path from config (matches Facility pattern)
+            var auditLogPath = configuration["AppSettings:AuditLogPath"] ?? "audit-logs";
+            Audit.Core.Configuration.DataProvider = new FileDataProvider(cfg => cfg.Directory(auditLogPath));
 
             // Required for AuditLogEventHandler to access HttpContext
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();

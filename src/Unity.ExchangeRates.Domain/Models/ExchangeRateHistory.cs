@@ -6,6 +6,9 @@ namespace Unity.ExchangeRates.Domain.Models
     [Table("ExchangeRateHistory")]
     public class ExchangeRateHistory : BaseEntity<int>
     {
+        [Required]
+        public int CurrencyId { get; set; }
+
         [Required, StringLength(10)]
         public required string CurrencyCode { get; set; }
 
@@ -22,7 +25,7 @@ namespace Unity.ExchangeRates.Domain.Models
 
         public DateTime EffectiveDate { get; set; }
 
-        [ForeignKey(nameof(CurrencyCode))]
+        [ForeignKey(nameof(CurrencyId))]
         public Currency? Currency { get; set; }
     }
 }

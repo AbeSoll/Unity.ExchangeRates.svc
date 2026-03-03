@@ -5,6 +5,7 @@ using Mediator;
 using Microsoft.AspNetCore.Mvc;
 using Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates;
 using Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates;
+using Unity.ExchangeRates.Service.Mediator.Queries.Currencies;
 using Unity.ExchangeRates.Service.Models.Results;
 using Unity.ExchangeRates.Api.Controllers.Base;
 using Unity.ExchangeRates.Api.ViewModels.Request;
@@ -14,7 +15,7 @@ namespace Unity.ExchangeRates.Api.Controllers
 {
     [ApiController]
     [ApiVersion("1.0")]
-    [Route("api/v{version:apiVersion}/exchangerates")]
+    [Route("api/v{version:apiVersion}/exchange-rates")]
     public class ExchangeRateController : BaseApiController
     {
         private readonly IMapper _mapper;
@@ -28,17 +29,33 @@ namespace Unity.ExchangeRates.Api.Controllers
             _logger = logger;
         }
 
-        [HttpGet("{currency}/{date}")]
+        [HttpGet]
         [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(void), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(void), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetRate(string currency, string date)
+        public async Task<IActionResult> GetRate([FromQuery] string? currency, [FromQuery] string? date)
         {
-            _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency, date);
+            if (string.IsNullOrEmpty(date))
+            {
+                date = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            }
+
+            _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency ?? "ALL", date);
             var request = new ExchangeRateRequest { currency = currency, date = date };
             var query = _mapper.Map<ExchangeRateQuery>(request);
             var result = await _mediator.Send(query);
             return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
+        }
+        
+        [HttpGet("currencies")]
+        [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(void), StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> GetCurrencies()
+        {
+            _logger.LogInformation("GetCurrencies request received");
+            var query = new GetCurrenciesQuery();
+            var result = await _mediator.Send(query);
+            return ApiResponse<BaseResult>(result);
         }
 
         [HttpPost("sync")]

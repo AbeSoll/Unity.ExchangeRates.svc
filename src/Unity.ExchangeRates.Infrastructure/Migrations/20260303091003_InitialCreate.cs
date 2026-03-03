@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Unity.ExchangeRates.Infrastructure.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialDB : Migration
+    public partial class InitialCreate : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -15,18 +15,20 @@ namespace Unity.ExchangeRates.Infrastructure.Migrations
                 name: "Currency",
                 columns: table => new
                 {
+                    CurrencyId = table.Column<int>(type: "int", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
                     CurrencyCode = table.Column<string>(type: "nvarchar(10)", maxLength: 10, nullable: false),
                     CurrencyName = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
                     UnitBase = table.Column<int>(type: "int", nullable: false),
-                    IsDeleted = table.Column<bool>(type: "bit", nullable: false),
                     CreatedOn = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    CreatedBy = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    CreatedBy = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     ModifiedOn = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    ModifiedBy = table.Column<string>(type: "nvarchar(max)", nullable: true)
+                    ModifiedBy = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    IsDeleted = table.Column<bool>(type: "bit", nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Currency", x => x.CurrencyCode);
+                    table.PrimaryKey("PK_Currency", x => x.CurrencyId);
                 });
 
             migrationBuilder.CreateTable(
@@ -35,33 +37,40 @@ namespace Unity.ExchangeRates.Infrastructure.Migrations
                 {
                     Id = table.Column<int>(type: "int", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
+                    CurrencyId = table.Column<int>(type: "int", nullable: false),
                     CurrencyCode = table.Column<string>(type: "nvarchar(10)", maxLength: 10, nullable: false),
                     RateDate = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "GETDATE()"),
                     BuyingRate = table.Column<decimal>(type: "decimal(18,4)", nullable: true),
                     SellingRate = table.Column<decimal>(type: "decimal(18,4)", nullable: true),
                     MiddleRate = table.Column<decimal>(type: "decimal(18,4)", nullable: true),
                     EffectiveDate = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    IsDeleted = table.Column<bool>(type: "bit", nullable: false),
                     CreatedOn = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    CreatedBy = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    CreatedBy = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     ModifiedOn = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    ModifiedBy = table.Column<string>(type: "nvarchar(max)", nullable: true)
+                    ModifiedBy = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    IsDeleted = table.Column<bool>(type: "bit", nullable: false)
                 },
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_ExchangeRateHistory", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_ExchangeRateHistory_Currency_CurrencyCode",
-                        column: x => x.CurrencyCode,
+                        name: "FK_ExchangeRateHistory_Currency_CurrencyId",
+                        column: x => x.CurrencyId,
                         principalTable: "Currency",
-                        principalColumn: "CurrencyCode",
-                        onDelete: ReferentialAction.Cascade);
+                        principalColumn: "CurrencyId",
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_ExchangeRateHistory_CurrencyCode",
+                name: "IX_Currency_CurrencyCode",
+                table: "Currency",
+                column: "CurrencyCode",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ExchangeRateHistory_CurrencyId",
                 table: "ExchangeRateHistory",
-                column: "CurrencyCode");
+                column: "CurrencyId");
         }
 
         /// <inheritdoc />

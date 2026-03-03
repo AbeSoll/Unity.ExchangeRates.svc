@@ -13,7 +13,7 @@
 | 1 | [Layered Architecture](#1--layered-architecture) | Struktur projek 6 layer |
 | 2 | [CQRS Pattern (Mediator)](#2--cqrs-pattern-mediator) | Command Query Responsibility Segregation |
 | 3 | [Structured Logging (Serilog)](#3--structured-logging-serilog) | Log levels, enricher, config |
-| 4 | [Security — API Key Authentication](#4--security--api-key-authentication) | Middleware, header validation |
+| 4 | [Security — Authentication (Future)](#4--security--authentication-future) | JWT/IDP planned |
 | 5 | [API Versioning](#5--api-versioning) | URL segment versioning |
 | 6 | [Rate Limiting](#6--rate-limiting) | Protect API dari abuse |
 | 7 | [Audit Logging (Audit.NET)](#7--audit-logging-auditnet) | Request/response tracking |
@@ -47,7 +47,7 @@ Projek dibahagikan kepada 6 projek berasingan, setiap satu ada tanggungjawab ter
 Unity.ExchangeRates.svc/src/
 ├── Unity.ExchangeRates.Api/              ← Entry point
 │   ├── Controllers/                       ← REST endpoints
-│   ├── Middlewares/                        ← Exception handler, API Key auth
+│   ├── Middlewares/                        ← Exception handler
 │   ├── Configurations/                    ← CORS, Audit, Mapper, Logging
 │   └── docs/                              ← Dokumentasi
 ├── Unity.ExchangeRates.Domain/           ← Pure models, zero dependency
@@ -120,21 +120,24 @@ builder.Services.AddMediator(opt => opt.ServiceLifetime = ServiceLifetime.Scoped
 ### Flow: GET Request
 
 ```
-Client → Controller.GetRate()
+Client → Controller.GetRate(?currency, ?date)
          → _mapper.Map<ExchangeRateQuery>(request)
          → _mediator.Send(query)
            → [RequestValidationBehavior] ← validate input
-           → [ExchangeRateQueryHandler]  ← query database
+           → [ExchangeRateQueryHandler]  ← query database (all or single)
          → _mapper.Map<BaseResponse>(result)
        → return JSON
 ```
 
 📂 `Api/Controllers/ExchangeRateController.cs`:
 ```csharp
-[HttpGet("{currency}/{date}")]
-public async Task<IActionResult> GetRate(string currency, string date)
+[HttpGet]
+public async Task<IActionResult> GetRate([FromQuery] string? currency, [FromQuery] string? date)
 {
-    _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency, date);
+    if (string.IsNullOrEmpty(date))
+        date = DateTime.UtcNow.ToString("yyyy-MM-dd");
+
+    _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency ?? "ALL", date);
     var request = new ExchangeRateRequest { currency = currency, date = date };
     var query = _mapper.Map<ExchangeRateQuery>(request);         // Map ke Query object
     var result = await _mediator.Send(query);                     // Hantar ke handler
@@ -148,8 +151,18 @@ public async Task<IActionResult> GetRate(string currency, string date)
 public async ValueTask<Result<BaseResult>> Handle(ExchangeRateQuery request, CancellationToken cancellationToken)
 {
     var createdDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-    var history = await _repository.GetRateByCreatedDateAsync(request.currency!, createdDate, cancellationToken);
 
+    // Kalau currency kosong — return SEMUA rates untuk tarikh tu
+    if (string.IsNullOrEmpty(request.currency))
+    {
+        var histories = await _repository.GetAllRatesByDateAsync(createdDate, cancellationToken);
+        if (histories.Count == 0)
+            return Result.Fail(new NotFoundError() { ... });
+        return new BaseResult() { data = histories };
+    }
+
+    // Single currency
+    var history = await _repository.GetRateByCreatedDateAsync(request.currency!, createdDate, cancellationToken);
     if (history is null)
         return Result.Fail(new NotFoundError() { errorCode = "00404", errorMsg = "No exchange rate data found..." });
 
@@ -208,7 +221,7 @@ public async ValueTask<Result<BaseResult>> Handle(GetCurrenciesQuery request, Ca
 
     var result = currencies.Select(c => new
     {
-        currencyCode = c.Id,         // CurrencyCode dari database
+        currencyCode = c.CurrencyCode,    // CurrencyCode dari database
         currencyName = c.CurrencyName
     }).ToList();
 
@@ -221,16 +234,28 @@ public async ValueTask<Result<BaseResult>> Handle(GetCurrenciesQuery request, Ca
 - Tak perlu hardcode currency list dalam frontend
 - Kalau tambah currency baru dalam DB, frontend auto nampak
 
-**URL:** `GET /api/v1/exchange-rates/currencies`
+**URLs:**
+- `GET /api/v1/exchange-rates` — semua rates (optional `?currency=` & `?date=`)
+- `GET /api/v1/exchange-rates/currencies` — senarai currencies
 
-**Response contoh:**
+**Response contoh (all rates):**
+```json
+{
+  "status": "Success",
+  "data": [
+    { "currencyCode": "usd", "rateDate": "2026-03-03", "buyingRate": 4.35, ... },
+    { "currencyCode": "gbp", "rateDate": "2026-03-03", "buyingRate": 5.45, ... }
+  ]
+}
+```
+
+**Response contoh (currencies):**
 ```json
 {
   "status": "Success",
   "data": [
     { "currencyCode": "usd", "currencyName": "US Dollar" },
-    { "currencyCode": "gbp", "currencyName": "British Pound" },
-    { "currencyCode": "eur", "currencyName": "Euro" }
+    { "currencyCode": "gbp", "currencyName": "British Pound" }
   ]
 }
 ```
@@ -323,18 +348,11 @@ static void ConfigureLog(IHostBuilder hostBuilder)
 |-------|----------|--------|
 | **Debug** | Detail internal, dev sahaja | `"Repository: GetActiveCurrenciesAsync called"` |
 | **Information** | Business milestones | `"Sync completed. Synced 8/8 currencies"` |
-| **Warning** | Recoverable issues, security alerts | `"API Key missing, IP=192.168.1.1"` |
+| **Warning** | Recoverable issues | `"No rate found in DB for currency=xyz"` |
 | **Error** | Operation failures | `"BNM API returned 404 for JPY"` |
 | **Critical** | System crashes | `"Hangfire job crashed unexpectedly"` |
 
 ### Contoh Penggunaan dalam Projek
-
-📂 `Api/Middlewares/ApiKeyAuthMiddleware.cs`:
-```csharp
-_logger.LogWarning("API Key missing from request. Path={Path}, IP={IP}",
-    context.Request.Path, context.Connection.RemoteIpAddress);
-```
-- **Warning** — unauthorized access attempt. Ops team boleh monitor pattern.
 
 📂 `Service/Mediator/Commands/.../ExchangeRateSyncCommandHandler.cs`:
 ```csharp
@@ -364,118 +382,23 @@ _logger.LogCritical(ex, "Hangfire SyncDaily: Job crashed unexpectedly");
 
 ---
 
-## 4 — Security — API Key Authentication
+## 4 — Security — Authentication (Future)
 
-### Apa?
-Setiap API request WAJIB ada header `X-Api-Key` dengan key yang sah. Tanpa key = 401 Unauthorized.
+### Status Semasa
+Buat masa ini, API **belum ada authentication layer** — semua endpoint terbuka. Ini keputusan sementara sehingga IDP (Identity Provider) siap.
 
-### Kenapa API Key?
-- **Immediate protection** — mudah implement, terus secure
-- **Phase 1** — nanti bila IDP ready, tambah JWT sebagai Phase 2
-- **Simple for clients** — hanya perlu tambah satu header
-- **Trackable** — boleh beri key berbeza untuk setiap client, trace siapa call
+### Rancangan Masa Depan
+- **JWT Bearer Authentication** — akan diimplementasi apabila IDP didaftarkan
+- Token validation (issuer, audience, signing key) akan dibaca dari config
+- Swagger UI akan ada "Authorize" button untuk input Bearer token
+- `[Authorize]` attribute akan ditambah pada controller/endpoint yang perlu dilindungi
 
-### Macam Mana?
-
-Custom middleware yang intercept SETIAP request sebelum sampai controller.
-
-📂 `Api/Middlewares/ApiKeyAuthMiddleware.cs`:
-
-#### Step 1 — Dependencies
-
-```csharp
-private readonly RequestDelegate _next;                    // Middleware seterusnya dalam pipeline
-private readonly IConfiguration _configuration;            // Baca API key dari config
-private readonly ILogger<ApiKeyAuthMiddleware> _logger;    // Log security events
-private const string ApiKeyHeaderName = "X-Api-Key";      // Nama header yang client kene hantar
-```
-
-- `RequestDelegate _next` — kalau tak panggil `_next(context)`, request BERHENTI sini
-- `const string` — header name tetap, consistent across codebase
-
-#### Step 2 — Skip Dev Tools
-
-```csharp
-var path = context.Request.Path.Value?.ToLower() ?? string.Empty;
-
-if (path.StartsWith("/swagger") || path.StartsWith("/hangfire"))
-{
-    await _next(context);  // Teruskan tanpa check
-    return;
-}
-```
-
-- **Kenapa skip Swagger?** UI perlu load dulu tanpa key. User authorize DALAM Swagger selepas buka
-- **Kenapa skip Hangfire?** Dashboard = dev tool. Production dah disable (line 61 `Program.cs`)
-- `?.ToLower()` — null-safe dan case-insensitive comparison
-
-#### Step 3 — Check Header Ada ke Tak
-
-```csharp
-if (!context.Request.Headers.TryGetValue(ApiKeyHeaderName, out var extractedApiKey))
-{
-    _logger.LogWarning("API Key missing from request. Path={Path}, IP={IP}",
-        context.Request.Path, context.Connection.RemoteIpAddress);
-    await WriteUnauthorizedResponse(context, "API Key is required...");
-    return;  // STOP — tak panggil _next
-}
-```
-
-- `TryGetValue` — safe check, tak throw exception
-- Log **IP address** — penting untuk security monitoring
-- `return` tanpa `_next` — request BERHENTI, tak sampai controller
-
-#### Step 4 — Validate Key
-
-```csharp
-var configuredApiKey = _configuration["ApiSecurity:ApiKey"];
-if (string.IsNullOrEmpty(configuredApiKey) || !string.Equals(extractedApiKey, configuredApiKey))
-{
-    _logger.LogWarning("Invalid API Key provided. Path={Path}, IP={IP}", ...);
-    await WriteUnauthorizedResponse(context, "Invalid API Key.");
-    return;
-}
-
-await _next(context);  // KEY SAH — teruskan ke rate limiter → controller
-```
-
-- Double check: config tak kosong DAN key match
-- Hanya `_next(context)` dipanggil kalau key 100% valid
-
-#### Step 5 — JSON Error Response
-
-```csharp
-private static async Task WriteUnauthorizedResponse(HttpContext context, string message)
-{
-    context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;  // 401
-    context.Response.ContentType = "application/json";
-    var response = new {
-        status = "Failed", errorCode = "00401", errorMsg = message,
-        timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", ...)
-    };
-    await context.Response.WriteAsync(JsonSerializer.Serialize(response));
-}
-```
-
-- **Kenapa JSON response?** Client nampak error message yang jelas, bukan blank 401
-- Format consistent dengan error response lain dalam API
-
-### Config
-
-📂 `appsettings.Development.json`:
-```json
-"ApiSecurity": {
-    "ApiKey": "dev-unity-exchangerates-key-2026"
-}
-```
-- Development: key hardcoded
-- **Production**: dari IDP / Azure Key Vault
-
-### Kelebihan
-1. **Centralized** — satu middleware cover semua endpoint
-2. **Logged** — setiap unauthorized attempt direkod
-3. **Extensible** — senang tambah JWT layer nanti
-4. **Consistent** — proper JSON error response
+### Security Layers Yang Sudah Ada
+Walaupun belum ada authentication, API masih dilindungi oleh:
+1. **Rate Limiting** — hadkan request per IP (Section 6)
+2. **CORS Lock-down** — hanya domain yang dibenarkan boleh call (Section 8)
+3. **Audit Logging** — setiap request direkod (Section 7)
+4. **Exception Handler** — error handling yang proper (Section 13)
 
 ---
 
