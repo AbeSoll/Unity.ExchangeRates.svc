@@ -18,6 +18,7 @@ namespace Unity.ExchangeRates.Infrastructure.Data
 
         public DbSet<Currency> Currencies { get; set; } = null!;
         public DbSet<ExchangeRateHistory> ExchangeRateHistories { get; set; } = null!;
+        public DbSet<AuditLog> AuditLogs { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -54,6 +55,14 @@ namespace Unity.ExchangeRates.Infrastructure.Data
                  .HasForeignKey(e => e.CurrencyId)
                  .OnDelete(DeleteBehavior.Restrict);
                 b.ToTable("ExchangeRateHistory");
+            });
+
+            modelBuilder.Entity<AuditLog>(b =>
+            {
+                b.HasKey(e => e.Id);
+                b.Property(e => e.Id).ValueGeneratedOnAdd();
+                b.Property(e => e.CreatedOn).HasDefaultValueSql("GETDATE()");
+                b.ToTable("AuditLog");
             });
         }
     }

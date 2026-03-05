@@ -4,9 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Polly;
 using Polly.Extensions.Http;
 using Unity.ExchangeRates.Service.Configurations;
-using Unity.ExchangeRates.Service.Services;
 using Unity.ExchangeRates.Shared.Jobs;
-using Unity.ExchangeRates.Shared.Services;
 
 namespace Unity.ExchangeRates.Shared
 {
@@ -14,8 +12,6 @@ namespace Unity.ExchangeRates.Shared
     {
         public static IServiceCollection RegisterSharedServiceModule(this IServiceCollection services, IConfiguration configuration)
         {
-            services.AddScoped<IAuditLogEventDispatcher, AuditLogEventDispatcher>();
-
             services
                 .AddHttpClients(configuration)
                 .AddHangfireServices(configuration);

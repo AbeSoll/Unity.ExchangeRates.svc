@@ -45,6 +45,14 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
 
                 _logger.LogInformation("ExchangeRateSyncCommandHandler: Starting sync for date={date}, session={session}", targetDateStr, session);
 
+                // Guard against duplicate sync
+                var alreadySynced = await _unitOfWork.ExchangeRates.ExistsForRateDateAsync(targetDate, cancellationToken);
+                if (alreadySynced)
+                {
+                    _logger.LogWarning("ExchangeRateSyncCommandHandler: Rates already exist for date={date}. Skipping sync.", targetDateStr);
+                    return Result.Fail(new GeneralError() { errorCode = "00409", errorMsg = $"Exchange rates for {targetDateStr} have already been synced." });
+                }
+
                 var currencies = await _unitOfWork.ExchangeRates.GetActiveCurrenciesAsync(cancellationToken);
                 _logger.LogDebug("ExchangeRateSyncCommandHandler: Loaded {Count} active currencies", currencies.Count);
 
@@ -88,7 +96,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                         BuyingRate = rateData.Rate?.BuyingRate ?? 0,
                         SellingRate = rateData.Rate?.SellingRate ?? 0,
                         MiddleRate = rateData.Rate?.MiddleRate ?? 0,
-                        CreatedOn = DateTime.Now,
+                        CreatedOn = DateTime.UtcNow,
                         CreatedBy = "System_Mediator"
                     };
 
@@ -111,7 +119,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
             {
                 await _unitOfWork.RollbackAsync(cancellationToken);
                 _logger.LogError(ex, "ExchangeRateSyncCommandHandler failed for date={date}. Transaction rolled back.", request.date);
-                return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = ex.Message });
+                return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = "An unexpected error occurred while syncing exchange rates." });
             }
         }
 

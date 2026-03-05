@@ -3,7 +3,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Unity.ExchangeRates.Domain\Unity.ExchangeRates.Domain.csproj" />
     <ProjectReference Include="..\Unity.ExchangeRates.Repository\Unity.ExchangeRates.Repository.csproj" />
-    <ProjectReference Include="..\Unity.ExchangeRates.Service\Unity.ExchangeRates.Service.csproj" />
   </ItemGroup>
 
   <ItemGroup>

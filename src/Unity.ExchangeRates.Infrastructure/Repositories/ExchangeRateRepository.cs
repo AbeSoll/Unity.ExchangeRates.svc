@@ -20,7 +20,7 @@ namespace Unity.ExchangeRates.Infrastructure.Repositories
         public async Task<List<Currency>> GetActiveCurrenciesAsync(CancellationToken cancellationToken)
         {
             _logger.LogDebug("Repository: GetActiveCurrenciesAsync called");
-            var list = await _context.Currencies.ToListAsync(cancellationToken);
+            var list = await _context.Currencies.AsNoTracking().ToListAsync(cancellationToken);
             _logger.LogInformation("Repository: GetActiveCurrenciesAsync returned {Count} currencies", list.Count);
             return list;
         }
@@ -30,6 +30,8 @@ namespace Unity.ExchangeRates.Infrastructure.Repositories
             _logger.LogDebug("Repository: GetRateByCreatedDateAsync for CurrencyCode={CurrencyCode}, CreatedDate={CreatedDate}",
                 currencyCode, createdDate);
             var history = await _context.ExchangeRateHistories
+                .AsNoTracking()
+                .Include(h => h.Currency)
                 .FirstOrDefaultAsync(h => h.CurrencyCode == currencyCode && h.CreatedOn.Date == createdDate.Date, cancellationToken);
             if (history is not null)
                 _logger.LogInformation("Repository: Found rate for {CurrencyCode} on CreatedDate={CreatedDate}", currencyCode, createdDate);
@@ -42,11 +44,20 @@ namespace Unity.ExchangeRates.Infrastructure.Repositories
         {
             _logger.LogDebug("Repository: GetAllRatesByDateAsync for CreatedDate={CreatedDate}", createdDate);
             var histories = await _context.ExchangeRateHistories
+                .AsNoTracking()
+                .Include(h => h.Currency)
                 .Where(h => h.CreatedOn.Date == createdDate.Date)
                 .OrderBy(h => h.CurrencyCode)
                 .ToListAsync(cancellationToken);
             _logger.LogInformation("Repository: GetAllRatesByDateAsync returned {Count} rates for {CreatedDate}", histories.Count, createdDate);
             return histories;
+        }
+
+        public async Task<bool> ExistsForRateDateAsync(DateTime rateDate, CancellationToken cancellationToken)
+        {
+            return await _context.ExchangeRateHistories
+                .AsNoTracking()
+                .AnyAsync(h => h.RateDate.Date == rateDate.Date, cancellationToken);
         }
 
         public async Task AddRateHistoryAsync(ExchangeRateHistory history, CancellationToken cancellationToken)

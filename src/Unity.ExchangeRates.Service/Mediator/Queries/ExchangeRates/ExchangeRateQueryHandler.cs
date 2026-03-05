@@ -46,7 +46,23 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
 
                     _logger.LogInformation("ExchangeRateQueryHandler: Retrieved {Count} rates for date={date}", histories.Count, request.date);
 
-                    return new BaseResult() { data = histories };
+                    var allRatesResult = histories.Select(h => new
+                    {
+                        currencyCode = h.CurrencyCode,
+                        unit = h.Currency?.UnitBase ?? 0,
+                        rate = new
+                        {
+                            rateDate = h.RateDate.ToString("yyyy-MM-dd"),
+                            effectiveDate = h.EffectiveDate.ToString("yyyy-MM-dd"),
+                            buyingRate = h.BuyingRate,
+                            sellingRate = h.SellingRate,
+                            middleRate = h.MiddleRate
+                        },
+                        lastUpdatedAt = h.CreatedOn.ToString("yyyy-MM-dd HH:mm:ss"),
+                        source = "Bank Negara Malaysia (BNM) Open API"
+                    }).ToList();
+
+                    return new BaseResult() { data = allRatesResult };
                 }
 
                 // Single currency
@@ -69,15 +85,28 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
 
                 _logger.LogInformation("ExchangeRateQueryHandler: Success for currency={currency}, date={date}", request.currency, request.date);
 
-                return new BaseResult()
+                var singleResult = new
                 {
-                    data = history
+                    currencyCode = history.CurrencyCode,
+                    unit = history.Currency?.UnitBase ?? 0,
+                    rate = new
+                    {
+                        rateDate = history.RateDate.ToString("yyyy-MM-dd"),
+                        effectiveDate = history.EffectiveDate.ToString("yyyy-MM-dd"),
+                        buyingRate = history.BuyingRate,
+                        sellingRate = history.SellingRate,
+                        middleRate = history.MiddleRate
+                    },
+                    lastUpdatedAt = history.CreatedOn.ToString("yyyy-MM-dd HH:mm:ss"),
+                    source = "Bank Negara Malaysia (BNM) Open API"
                 };
+
+                return new BaseResult() { data = singleResult };
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "ExchangeRateQueryHandler failed for currency={currency}, date={date}", request.currency, request.date);
-                return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = ex.Message });
+                return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = "An unexpected error occurred while retrieving exchange rates." });
             }
         }
     }

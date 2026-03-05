@@ -8,13 +8,11 @@ namespace Unity.ExchangeRates.Api.Middlewares
     public class ExceptionHandlerMiddleware
     {
         private readonly RequestDelegate _next;
-        private readonly IWebHostEnvironment _env;
         private readonly ILogger<ExceptionHandlerMiddleware> _logger;
 
-        public ExceptionHandlerMiddleware(RequestDelegate next, IWebHostEnvironment env, ILogger<ExceptionHandlerMiddleware> logger)
+        public ExceptionHandlerMiddleware(RequestDelegate next, ILogger<ExceptionHandlerMiddleware> logger)
         {
             _next = next;
-            _env = env;
             _logger = logger;
         }
 
@@ -29,7 +27,6 @@ namespace Unity.ExchangeRates.Api.Middlewares
                 var response = context.Response;
                 response.ContentType = "application/json";
                 dynamic resultObject = new JObject();
-                resultObject.message = new JValue(error?.Message);
 
                 switch (error)
                 {
@@ -37,6 +34,7 @@ namespace Unity.ExchangeRates.Api.Middlewares
                         // custom application error — expected domain validation, not a real error
                         _logger.LogWarning(error, "Domain exception: {Message}", error?.Message);
                         response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        resultObject.message = new JValue(error?.Message);
                         break;
                     case ValidationException e:
                         // user input validation failure — expected, not a real error
@@ -45,9 +43,10 @@ namespace Unity.ExchangeRates.Api.Middlewares
                         resultObject.message = e.Errors.Select(e => e.ErrorMessage).Distinct().FirstOrDefault();
                         break;
                     default:
-                        // unhandled/unexpected error
+                        // unhandled/unexpected error — never expose internal details to clients
                         _logger.LogError(error, "Unhandled exception: {Message}", error?.Message);
                         response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                        resultObject.message = new JValue("An unexpected error occurred. Please try again later.");
                         break;
                 }
 

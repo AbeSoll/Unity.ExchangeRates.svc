@@ -11,6 +11,7 @@ using Unity.ExchangeRates.Shared;
 using Unity.ExchangeRates.Shared.Jobs;
 using Unity.ExchangeRates.Api.Configurations;
 using Unity.ExchangeRates.Api.Configurations.Logging;
+using Unity.ExchangeRates.Api.Configurations.Swagger;
 using Unity.ExchangeRates.Api.Middlewares;
 
 // ============================================================
@@ -76,7 +77,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors();
-app.UseAuditLog();
+app.UseMiddleware<AuditLogMiddleware>();
 app.UseAuthorization();
 app.MapControllers();
 
@@ -132,25 +133,8 @@ static void ConfigureSwagger(IServiceCollection services)
 {
     services.AddEndpointsApiExplorer();
 
-    var serviceProvider = services.BuildServiceProvider();
-    var apiVersionDescriptionProvider = serviceProvider.GetRequiredService<IApiVersionDescriptionProvider>();
-
-    services.AddSwaggerGen(swagger =>
-    {
-        foreach (var description in apiVersionDescriptionProvider.ApiVersionDescriptions)
-        {
-            var apiInfo = new OpenApiInfo
-            {
-                Title = "Unity Exchange Rates API",
-                Version = $"{description.ApiVersion}"
-            };
-            if (description.IsDeprecated)
-            {
-                apiInfo.Description += " This API version has been deprecated.";
-            }
-            swagger.SwaggerDoc(description.GroupName, apiInfo);
-        }
-    });
+    services.AddSwaggerGen();
+    services.ConfigureOptions<ConfigureSwaggerOptions>();
 }
 
 // ============================================================
