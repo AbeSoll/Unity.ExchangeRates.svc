@@ -1,5 +1,6 @@
 using Serilog.Core;
 using Serilog.Events;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace Unity.ExchangeRates.Api.Configurations.Logging
@@ -11,38 +12,43 @@ namespace Unity.ExchangeRates.Api.Configurations.Logging
         [MethodImpl(MethodImplOptions.NoInlining)]
         public void Enrich(LogEvent logEvent, ILogEventPropertyFactory propertyFactory)
         {
-            LogEventPropertyValue value;
-            if (!logEvent.Properties.TryGetValue("SourceContext", out value) || value is not ScalarValue scalarValue)
+            if (logEvent.Properties.ContainsKey(PropertyName))
                 return;
 
-            var SourceContextStr = (string)scalarValue.Value;
+            if (!logEvent.Properties.TryGetValue("SourceContext", out var value) || value is not ScalarValue scalarValue)
+                return;
 
-            if (!logEvent.Properties.ContainsKey(PropertyName))
+            var sourceContext = scalarValue.Value as string;
+            if (string.IsNullOrEmpty(sourceContext))
+                return;
+
+            var caller = string.Empty;
+            var stackTrace = new StackTrace(fNeedFileInfo: false);
+
+            foreach (var frame in stackTrace.GetFrames())
             {
-                var stackFrame = new List<dynamic>();
+                var method = frame.GetMethod();
+                if (method?.DeclaringType == null) continue;
 
-                string caller = String.Empty;
-                foreach (var frame in stackFrame)
+                var fullName = method.DeclaringType.FullName ?? string.Empty;
+
+                if (fullName == sourceContext)
                 {
-                    var method = frame.GetMethod();
-                    if (method!.DeclaringType != null)
-                    {
-                        if (method!.DeclaringType.FullName == SourceContextStr)
-                        {
-                            caller = $".{method.Name}";
-                            break;
-                        }
-
-                        if (method!.DeclaringType.FullName.Contains(SourceContextStr))
-                        {
-                            var dtName = method!.DeclaringType!.Name;
-                            caller = dtName.Contains(">") ? $".{dtName.Substring(1, dtName.LastIndexOf(">") - 1)}" : dtName;
-                        }
-                    }
+                    caller = $".{method.Name}";
+                    break;
                 }
 
-                logEvent.AddPropertyIfAbsent(new LogEventProperty("MethodName", new ScalarValue(caller)));
+                if (fullName.Contains(sourceContext))
+                {
+                    var dtName = method.DeclaringType.Name;
+                    caller = dtName.Contains('>')
+                        ? $".{dtName[1..dtName.LastIndexOf('>')]}"
+                        : $".{dtName}";
+                    break;
+                }
             }
+
+            logEvent.AddPropertyIfAbsent(new LogEventProperty(PropertyName, new ScalarValue(caller)));
         }
     }
 }

@@ -30,11 +30,11 @@ namespace Unity.ExchangeRates.Api.Middlewares
 
                 switch (error)
                 {
-                    case ExchangeRatesDomainException:
-                        // custom application error — expected domain validation, not a real error
-                        _logger.LogWarning(error, "Domain exception: {Message}", error?.Message);
+                    case ExchangeRatesDomainException domainEx:
+                        _logger.LogWarning(error, "Domain exception: {Message}", error.Message);
                         response.StatusCode = (int)HttpStatusCode.BadRequest;
-                        resultObject.message = new JValue(error?.Message);
+                        resultObject.message = new JValue(domainEx.Message); // OK if you control all domain exception messages
+                        resultObject.errorCode = new JValue(domainEx.Code);
                         break;
                     case ValidationException e:
                         // user input validation failure — expected, not a real error

@@ -27,7 +27,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.Currencies
 
                 var currencies = await _repository.GetActiveCurrenciesAsync(cancellationToken);
 
-                _logger.LogInformation("GetCurrenciesQueryHandler: Retrieved {Count} currencies", currencies.Count);
+                _logger.LogDebug("GetCurrenciesQueryHandler: Retrieved {Count} currencies", currencies.Count);
 
                 var result = currencies.Select(c => new
                 {
@@ -46,7 +46,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.Currencies
                 return Result.Fail(new Service.Common.Errors.GeneralError()
                 {
                     errorCode = "00500",
-                    errorMsg = ex.Message
+                    errorMsg = "An unexpected error occurred while retrieving currencies."
                 });
             }
         }

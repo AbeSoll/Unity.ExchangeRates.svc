@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Unity.ExchangeRates.Domain.Models;
 using Unity.ExchangeRates.Infrastructure.Interceptors;
 
@@ -47,6 +46,9 @@ namespace Unity.ExchangeRates.Infrastructure.Data
                 b.Property(e => e.RateDate)
                  .HasColumnName("RateDate")
                  .HasDefaultValueSql("GETDATE()");
+                b.Property(e => e.Session)
+                 .HasMaxLength(4)
+                 .IsRequired();
                 b.Property(e => e.BuyingRate).HasColumnType("decimal(18,4)");
                 b.Property(e => e.SellingRate).HasColumnType("decimal(18,4)");
                 b.Property(e => e.MiddleRate).HasColumnType("decimal(18,4)");
@@ -54,6 +56,9 @@ namespace Unity.ExchangeRates.Infrastructure.Data
                  .WithMany()
                  .HasForeignKey(e => e.CurrencyId)
                  .OnDelete(DeleteBehavior.Restrict);
+                b.HasIndex(e => new { e.RateDate, e.Session, e.CurrencyCode })
+                 .IsUnique()
+                 .HasDatabaseName("IX_ExchangeRateHistory_RateDate_Session_CurrencyCode");
                 b.ToTable("ExchangeRateHistory");
             });
 
@@ -62,6 +67,9 @@ namespace Unity.ExchangeRates.Infrastructure.Data
                 b.HasKey(e => e.Id);
                 b.Property(e => e.Id).ValueGeneratedOnAdd();
                 b.Property(e => e.CreatedOn).HasDefaultValueSql("GETDATE()");
+                b.HasIndex(e => e.TraceId);
+                b.HasIndex(e => e.CreatedOn);
+                b.HasIndex(e => e.ResponseStatusCode);
                 b.ToTable("AuditLog");
             });
         }

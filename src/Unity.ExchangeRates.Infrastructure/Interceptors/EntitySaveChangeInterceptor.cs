@@ -26,12 +26,12 @@ namespace Unity.ExchangeRates.Infrastructure.Interceptors
             {
                 if (entry.State == EntityState.Added)
                 {
-                    entry.Entity.CreatedOn = DateTime.UtcNow;
+                    entry.Entity.CreatedOn = DateTime.Now;
                 }
 
                 if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
                 {
-                    entry.Entity.ModifiedOn = DateTime.UtcNow;
+                    entry.Entity.ModifiedOn = DateTime.Now;
                 }
             }
         }

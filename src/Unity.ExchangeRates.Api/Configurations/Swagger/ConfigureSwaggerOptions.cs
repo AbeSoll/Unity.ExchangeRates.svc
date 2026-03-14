@@ -1,7 +1,9 @@
 using Asp.Versioning.ApiExplorer;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
+using System.Reflection;
 
 namespace Unity.ExchangeRates.Api.Configurations.Swagger
 {
@@ -29,6 +31,12 @@ namespace Unity.ExchangeRates.Api.Configurations.Swagger
                 }
                 options.SwaggerDoc(description.GroupName, apiInfo);
             }
+
+            // Include XML comments for endpoint descriptions and response documentation
+            var xmlFilename = $"{Assembly.GetEntryAssembly()!.GetName().Name}.xml";
+            var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFilename);
+            if (File.Exists(xmlPath))
+                options.IncludeXmlComments(xmlPath);
         }
     }
 }

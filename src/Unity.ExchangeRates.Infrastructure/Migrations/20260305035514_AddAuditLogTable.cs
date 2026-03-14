@@ -26,7 +26,6 @@ namespace Unity.ExchangeRates.Infrastructure.Migrations
                     ResponseStatusCode = table.Column<int>(type: "int", nullable: false),
                     ResponseBody = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     ClientIpAddress = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: true),
-                    UserAgent = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
                     DurationMs = table.Column<long>(type: "bigint", nullable: false),
                     CreatedOn = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "GETDATE()")
                 },

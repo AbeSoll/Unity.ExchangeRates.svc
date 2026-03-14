@@ -51,17 +51,16 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
 
         protected IActionResult UnhandledProblem()
         {
-            var ex = HttpContext.Features.Get<IExceptionHandlerFeature>()?.Error;
             int statusCode = StatusCodes.Status500InternalServerError;
 
             Response.StatusCode = statusCode;
             var resp = new BaseResponse()
             {
                 status = StandardFormat.FailedStatus,
-                timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
+                timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
                 traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
                 errorCode = "00500",
-                errorMsg = ex?.Message ?? ResponseMessage.GENERAL_ERROR
+                errorMsg = ResponseMessage.GENERAL_ERROR
             };
             return new JsonResult(resp);
         }
@@ -74,7 +73,7 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
             var resp = new BaseResponse()
             {
                 status = StandardFormat.FailedStatus,
-                timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
+                timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
                 traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
                 errorCode = "00404",
                 errorMsg = String.Empty

@@ -14,6 +14,12 @@ namespace Unity.ExchangeRates.Domain.Models
 
         public DateTime RateDate { get; set; }
 
+        /// <summary>
+        /// BNM session code (0900, 1130, 1200, 1700).
+        /// </summary>
+        [Required, StringLength(4)]
+        public required string Session { get; set; }
+
         [Column(TypeName = "decimal(18, 4)")]
         public decimal? BuyingRate { get; set; }
 

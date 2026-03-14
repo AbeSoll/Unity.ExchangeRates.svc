@@ -25,26 +25,51 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
         {
             try
             {
-                var createdDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-
-                // If no currency specified — return ALL rates for the date
-                if (string.IsNullOrEmpty(request.currency))
+                // Resolve date: explicit value or the latest available date in the database
+                DateTime rateDate;
+                if (string.IsNullOrEmpty(request.date))
                 {
-                    _logger.LogDebug("ExchangeRateQueryHandler: Fetching ALL rates for date={date}", request.date);
-
-                    var histories = await _repository.GetAllRatesByDateAsync(createdDate, cancellationToken);
-
-                    if (histories.Count == 0)
+                    var latestDate = await _repository.GetLatestRateDateAsync(cancellationToken);
+                    if (latestDate is null)
                     {
-                        _logger.LogWarning("ExchangeRateQueryHandler: No rates found for date={date}", request.date);
+                        _logger.LogDebug("ExchangeRateQueryHandler: No date provided and no data exists in database");
                         return Result.Fail(new NotFoundError()
                         {
                             errorCode = "00404",
-                            errorMsg = $"No exchange rate data found for {request.date}."
+                            errorMsg = "No records found."
+                        });
+                    }
+                    rateDate = latestDate.Value;
+                    _logger.LogDebug("ExchangeRateQueryHandler: No date provided, resolved to latest available: {date}",
+                        rateDate.ToString("yyyy-MM-dd"));
+                }
+                else
+                {
+                    rateDate = DateTime.ParseExact(request.date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                }
+
+                var dateStr = rateDate.ToString("yyyy-MM-dd");
+
+                // If no currency specified — return ALL rates for the date (latest session per currency)
+                if (string.IsNullOrEmpty(request.currency))
+                {
+                    _logger.LogDebug("ExchangeRateQueryHandler: Fetching ALL rates for date={date}", dateStr);
+
+                    var histories = await _repository.GetAllRatesByLatestSessionAsync(rateDate, cancellationToken);
+
+                    if (histories.Count == 0)
+                    {
+                        _logger.LogDebug("ExchangeRateQueryHandler: No rates found for date={date}", dateStr);
+                        return Result.Fail(new NotFoundError()
+                        {
+                            errorCode = "00404",
+                            errorMsg = "No records found."
                         });
                     }
 
-                    _logger.LogInformation("ExchangeRateQueryHandler: Retrieved {Count} rates for date={date}", histories.Count, request.date);
+                    var distinctSessions = histories.Select(h => h.Session).Distinct().OrderByDescending(s => s);
+                    _logger.LogDebug("ExchangeRateQueryHandler: Retrieved {Count} rates for date={date} across sessions=[{Sessions}]",
+                        histories.Count, dateStr, string.Join(", ", distinctSessions));
 
                     var allRatesResult = histories.Select(h => new
                     {
@@ -58,6 +83,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                             sellingRate = h.SellingRate,
                             middleRate = h.MiddleRate
                         },
+                        session = h.Session,
                         lastUpdatedAt = h.CreatedOn.ToString("yyyy-MM-dd HH:mm:ss"),
                         source = "Bank Negara Malaysia (BNM) Open API"
                     }).ToList();
@@ -65,25 +91,26 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                     return new BaseResult() { data = allRatesResult };
                 }
 
-                // Single currency
+                // Single currency — return the latest session available for this specific currency
                 _logger.LogDebug("ExchangeRateQueryHandler: Querying DB for currency={currency}, date={date}",
-                    request.currency, request.date);
+                    request.currency, dateStr);
 
-                var history = await _repository.GetRateByCreatedDateAsync(request.currency, createdDate, cancellationToken);
+                var history = await _repository.GetRateByLatestSessionAsync(request.currency, rateDate, cancellationToken);
 
                 if (history is null)
                 {
-                    _logger.LogWarning("ExchangeRateQueryHandler: No rate found in DB for currency={currency}, date={date}",
-                        request.currency, request.date);
+                    _logger.LogDebug("ExchangeRateQueryHandler: No rate found in DB for currency={currency}, date={date}",
+                        request.currency, dateStr);
 
                     return Result.Fail(new NotFoundError()
                     {
                         errorCode = "00404",
-                        errorMsg = "No exchange rate data found for the given date."
+                        errorMsg = "No records found."
                     });
                 }
 
-                _logger.LogInformation("ExchangeRateQueryHandler: Success for currency={currency}, date={date}", request.currency, request.date);
+                _logger.LogDebug("ExchangeRateQueryHandler: Success for currency={currency}, date={date}, session={session}",
+                    request.currency, dateStr, history.Session);
 
                 var singleResult = new
                 {
@@ -97,6 +124,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                         sellingRate = history.SellingRate,
                         middleRate = history.MiddleRate
                     },
+                    session = history.Session,
                     lastUpdatedAt = history.CreatedOn.ToString("yyyy-MM-dd HH:mm:ss"),
                     source = "Bank Negara Malaysia (BNM) Open API"
                 };

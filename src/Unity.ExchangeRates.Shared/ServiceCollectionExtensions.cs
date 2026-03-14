@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Polly;
 using Polly.Extensions.Http;
+using Polly.Timeout;
 using Unity.ExchangeRates.Service.Configurations;
 using Unity.ExchangeRates.Shared.Jobs;
 
@@ -29,9 +30,14 @@ namespace Unity.ExchangeRates.Shared
 
                 client.BaseAddress = new Uri(settings.BaseUrl.TrimEnd('/') + '/');
                 client.DefaultRequestHeaders.Add("Accept", settings.AcceptHeader);
-                client.Timeout = TimeSpan.FromSeconds(10);
+
+                // Let Polly manage per-attempt timeouts; disable HttpClient's global timeout
+                client.Timeout = Timeout.InfiniteTimeSpan;
             })
-            .AddPolicyHandler(BuildRetryPolicy());
+            // Outer: retry policy (wraps timeout — retries on per-attempt timeout)
+            .AddPolicyHandler(BuildRetryPolicy())
+            // Inner: per-attempt timeout (each individual request gets 10s)
+            .AddPolicyHandler(BuildTimeoutPolicy());
 
             return services;
         }
@@ -45,16 +51,29 @@ namespace Unity.ExchangeRates.Shared
             return services;
         }
 
+        /// <summary>
+        /// Retries on transient HTTP errors (5xx, 408) and per-attempt timeouts.
+        /// 3 retries with exponential backoff: 1s → 2s → 5s.
+        /// </summary>
         private static IAsyncPolicy<HttpResponseMessage> BuildRetryPolicy()
         {
             return HttpPolicyExtensions
                 .HandleTransientHttpError()
+                .Or<TimeoutRejectedException>()
                 .WaitAndRetryAsync(new[]
                 {
                     TimeSpan.FromSeconds(1),
                     TimeSpan.FromSeconds(2),
                     TimeSpan.FromSeconds(5)
                 });
+        }
+
+        /// <summary>
+        /// Each individual HTTP attempt gets 10 seconds before Polly cancels it.
+        /// </summary>
+        private static IAsyncPolicy<HttpResponseMessage> BuildTimeoutPolicy()
+        {
+            return Policy.TimeoutAsync<HttpResponseMessage>(TimeSpan.FromSeconds(10));
         }
     }
 }

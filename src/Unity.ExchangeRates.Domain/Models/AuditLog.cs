@@ -32,11 +32,11 @@ namespace Unity.ExchangeRates.Domain.Models
         [StringLength(50)]
         public string? ClientIpAddress { get; set; }
 
-        [StringLength(500)]
-        public string? UserAgent { get; set; }
+        //[StringLength(500)]
+        //public string? UserAgent { get; set; }
 
         public long DurationMs { get; set; }
 
-        public DateTime CreatedOn { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedOn { get; set; } = DateTime.Now;
     }
 }

@@ -2,6 +2,7 @@ using FluentResults;
 using Mediator;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Net;
 using System.Net.Http.Json;
 using Unity.ExchangeRates.Domain.Models;
 using Unity.ExchangeRates.Service.Models.Results;
@@ -13,6 +14,12 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
 {
     public class ExchangeRateSyncCommandHandler : IRequestHandler<ExchangeRateSyncCommand, Result<BaseResult>>
     {
+        /// <summary>
+        /// Currency used to probe BNM API availability for a given date and session.
+        /// USD is the most universally published rate by BNM.
+        /// </summary>
+        private const string ReferenceCurrency = "usd";
+
         private readonly IUnitOfWork _unitOfWork;
         private readonly HttpClient _httpClient;
         private readonly BnmApiOptions _settings;
@@ -35,23 +42,35 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
             try
             {
                 var inputDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-                var targetDate = ResolveBusinessDate(inputDate);
-                var targetDateStr = targetDate.ToString("yyyy-MM-dd");
                 var session = !string.IsNullOrEmpty(request.session) ? request.session : _settings.DefaultSession;
+                var dateStr = inputDate.ToString("yyyy-MM-dd");
 
-                if (inputDate != targetDate)
-                    _logger.LogInformation("ExchangeRateSyncCommandHandler: Input date {inputDate} falls on weekend, resolved to {targetDate}",
-                        request.date, targetDateStr);
-
-                _logger.LogInformation("ExchangeRateSyncCommandHandler: Starting sync for date={date}, session={session}", targetDateStr, session);
-
-                // Guard against duplicate sync
-                var alreadySynced = await _unitOfWork.ExchangeRates.ExistsForRateDateAsync(targetDate, cancellationToken);
-                if (alreadySynced)
+                // Step 1: Idempotency — skip if this session has already been synced
+                if (await _unitOfWork.ExchangeRates.SessionExistsAsync(inputDate, session, cancellationToken))
                 {
-                    _logger.LogWarning("ExchangeRateSyncCommandHandler: Rates already exist for date={date}. Skipping sync.", targetDateStr);
-                    return Result.Fail(new GeneralError() { errorCode = "00409", errorMsg = $"Exchange rates for {targetDateStr} have already been synced." });
+                    _logger.LogDebug("ExchangeRateSyncCommandHandler: Session {Session} for {Date} already synced. Skipping.",
+                        session, dateStr);
+                    return new BaseResult()
+                    {
+                        data = $"Session {session} for {dateStr} has already been synced."
+                    };
                 }
+
+                // Step 2: Probe BNM with USD — if no data, mirror BNM's response exactly
+                if (!await IsRateAvailableAsync(inputDate, session, cancellationToken))
+                {
+                    _logger.LogDebug("ExchangeRateSyncCommandHandler: BNM has no rates for {Date} session={Session}.",
+                        dateStr, session);
+                    return Result.Fail(new NotFoundError()
+                    {
+                        errorCode = "00404",
+                        errorMsg = "No records found."
+                    });
+                }
+
+                // Step 3: Sync all active currencies for this date and session
+                _logger.LogInformation("ExchangeRateSyncCommandHandler: Starting sync for date={Date}, session={Session}",
+                    dateStr, session);
 
                 var currencies = await _unitOfWork.ExchangeRates.GetActiveCurrenciesAsync(cancellationToken);
                 _logger.LogDebug("ExchangeRateSyncCommandHandler: Loaded {Count} active currencies", currencies.Count);
@@ -62,17 +81,17 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                 foreach (var curr in currencies)
                 {
                     var path = _settings.Endpoints["ExchangeRate"];
-                    var url = $"{path}/{curr.CurrencyCode}/date/{targetDateStr}?session={session}&quote=rm";
+                    var url = $"{path}/{curr.CurrencyCode}/date/{dateStr}?session={session}&quote=rm";
 
-                    _logger.LogDebug("ExchangeRateSyncCommandHandler: Calling BNM API for currency={currency}, date={date}, url={url}",
-                        curr.CurrencyCode, targetDateStr, url);
+                    _logger.LogDebug("ExchangeRateSyncCommandHandler: Calling BNM API for currency={Currency}, date={Date}, session={Session}",
+                        curr.CurrencyCode, dateStr, session);
 
                     var response = await _httpClient.GetAsync(url, cancellationToken);
 
                     if (!response.IsSuccessStatusCode)
                     {
-                        _logger.LogError("ExchangeRateSyncCommandHandler: Failed to fetch {currency} for {date}. BNM API returned {StatusCode}",
-                            curr.CurrencyCode, targetDateStr, response.StatusCode);
+                        _logger.LogWarning("ExchangeRateSyncCommandHandler: Failed to fetch {Currency} for {Date} session={Session}. BNM returned {StatusCode}",
+                            curr.CurrencyCode, dateStr, session, response.StatusCode);
                         continue;
                     }
 
@@ -80,8 +99,8 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
 
                     if (bnmData?.Data?.Rate is null)
                     {
-                        _logger.LogError("ExchangeRateSyncCommandHandler: Failed to fetch {currency} for {date}. BNM returned empty data",
-                            curr.CurrencyCode, targetDateStr);
+                        _logger.LogWarning("ExchangeRateSyncCommandHandler: BNM returned empty data for {Currency} on {Date} session={Session}",
+                            curr.CurrencyCode, dateStr, session);
                         continue;
                     }
 
@@ -91,12 +110,13 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                         Id = 0,
                         CurrencyId = curr.Id,
                         CurrencyCode = curr.CurrencyCode,
-                        RateDate = targetDate,
-                        EffectiveDate = targetDate,
+                        RateDate = inputDate,
+                        Session = session,
+                        EffectiveDate = inputDate,
                         BuyingRate = rateData.Rate?.BuyingRate ?? 0,
                         SellingRate = rateData.Rate?.SellingRate ?? 0,
                         MiddleRate = rateData.Rate?.MiddleRate ?? 0,
-                        CreatedOn = DateTime.UtcNow,
+                        CreatedOn = DateTime.Now,
                         CreatedBy = "System_Mediator"
                     };
 
@@ -107,31 +127,46 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
                 await _unitOfWork.CommitAsync(cancellationToken);
 
-                _logger.LogInformation("ExchangeRateSyncCommandHandler: Completed. Synced {synced}/{total} currencies for {date} session={session}",
-                    syncedCount, currencies.Count, targetDateStr, session);
+                _logger.LogInformation("ExchangeRateSyncCommandHandler: Completed. Synced {Synced}/{Total} currencies for {Date} session={Session}",
+                    syncedCount, currencies.Count, dateStr, session);
 
                 return new BaseResult()
                 {
-                    data = $"Synced {syncedCount} of {currencies.Count} currencies for {targetDateStr} (session={session})"
+                    data = $"Synced {syncedCount} of {currencies.Count} currencies for {dateStr} (session={session})"
                 };
             }
             catch (Exception ex)
             {
                 await _unitOfWork.RollbackAsync(cancellationToken);
-                _logger.LogError(ex, "ExchangeRateSyncCommandHandler failed for date={date}. Transaction rolled back.", request.date);
-                return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = "An unexpected error occurred while syncing exchange rates." });
+                _logger.LogError(ex, "ExchangeRateSyncCommandHandler failed for date={Date}, session={Session}. Transaction rolled back.",
+                    request.date, request.session);
+                return Result.Fail(new GeneralError()
+                {
+                    errorCode = "00500",
+                    errorMsg = "An unexpected error occurred while syncing exchange rates."
+                });
             }
         }
 
         /// <summary>
-        /// BNM only publishes rates on business days (Mon-Fri)
-        /// If the date falls on Saturday or Sunday, resolve to the previous Friday
+        /// Probes BNM API with a single reference currency (USD) to check if rates exist for the given date and session.
+        /// Returns false for holidays/weekends (404). Throws on server errors (5xx after Polly exhaustion).
         /// </summary>
-        private static DateTime ResolveBusinessDate(DateTime date)
+        private async Task<bool> IsRateAvailableAsync(DateTime date, string session, CancellationToken cancellationToken)
         {
-            while (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
-                date = date.AddDays(-1);
-            return date;
+            var path = _settings.Endpoints["ExchangeRate"];
+            var dateStr = date.ToString("yyyy-MM-dd");
+            var url = $"{path}/{ReferenceCurrency}/date/{dateStr}?session={session}&quote=rm";
+
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+
+            if (response.StatusCode is HttpStatusCode.NotFound)
+                return false;
+
+            response.EnsureSuccessStatusCode();
+
+            var bnmData = await response.Content.ReadFromJsonAsync<BnmApiResponse>(cancellationToken: cancellationToken);
+            return bnmData?.Data?.Rate is not null;
         }
     }
 }

@@ -2,7 +2,6 @@
 using FluentValidation;
 using Mediator;
 using Microsoft.Extensions.Logging;
-using System.Globalization;
 using Unity.ExchangeRates.Service.Common.Errors;
 
 namespace Unity.ExchangeRates.Service.Behaviors

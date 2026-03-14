@@ -1,6 +1,5 @@
 ﻿using Asp.Versioning;
 using AutoMapper;
-using FluentResults;
 using Mediator;
 using Microsoft.AspNetCore.Mvc;
 using Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates;
@@ -16,6 +15,7 @@ namespace Unity.ExchangeRates.Api.Controllers
     [ApiController]
     [ApiVersion("1.0")]
     [Route("api/v{version:apiVersion}/exchange-rates")]
+    [Produces("application/json")]
     public class ExchangeRateController : BaseApiController
     {
         private readonly IMapper _mapper;
@@ -35,24 +35,19 @@ namespace Unity.ExchangeRates.Api.Controllers
         [ProducesResponseType(typeof(void), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetRate([FromQuery] string? currency, [FromQuery] string? date)
         {
-            if (string.IsNullOrEmpty(date))
-            {
-                date = DateTime.UtcNow.ToString("yyyy-MM-dd");
-            }
-
-            _logger.LogInformation("GetRate request received: currency={currency}, date={date}", currency ?? "ALL", date);
+            _logger.LogDebug("GetRate request received: currency={currency}, date={date}", currency ?? "ALL", date ?? "latest");
             var request = new ExchangeRateRequest { currency = currency, date = date };
             var query = _mapper.Map<ExchangeRateQuery>(request);
             var result = await _mediator.Send(query);
             return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
         }
-        
+
         [HttpGet("currencies")]
         [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(void), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> GetCurrencies()
         {
-            _logger.LogInformation("GetCurrencies request received");
+            _logger.LogDebug("GetCurrencies request received");
             var query = new GetCurrenciesQuery();
             var result = await _mediator.Send(query);
             return ApiResponse<BaseResult>(result);
@@ -61,10 +56,11 @@ namespace Unity.ExchangeRates.Api.Controllers
         [HttpPost("sync")]
         [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(void), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(void), StatusCodes.Status404NotFound)]
         [ProducesResponseType(typeof(void), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> Sync([FromBody] ExchangeRateSyncRequest syncRequest)
         {
-            _logger.LogInformation("Sync request received: date={date}, session={session}", syncRequest.date, syncRequest.session);
+            _logger.LogDebug("Sync request received: date={date}, session={session}", syncRequest.date, syncRequest.session);
             var command = _mapper.Map<ExchangeRateSyncCommand>(syncRequest);
             var result = await _mediator.Send(command);
             return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
