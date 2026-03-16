@@ -4,7 +4,7 @@ namespace Unity.ExchangeRates.Service.Models.Constants
     {
         public struct StandardFormat
         {
-            public static System.Globalization.CultureInfo Culture = new System.Globalization.CultureInfo("en-MY", false);
+            public static readonly System.Globalization.CultureInfo Culture = new("en-MY", false);
             public const string DateTime = "{0:dd/MM/yyyy}";
             public const string ISODateTime = "yyyy-MM-dd";
             public const string HashDateTime = "yyyyMMdd";

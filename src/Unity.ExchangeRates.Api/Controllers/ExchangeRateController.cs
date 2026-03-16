@@ -2,7 +2,7 @@
 using AutoMapper;
 using Mediator;
 using Microsoft.AspNetCore.Mvc;
-using Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates;
+//using Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates;
 using Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates;
 using Unity.ExchangeRates.Service.Mediator.Queries.Currencies;
 using Unity.ExchangeRates.Service.Models.Results;
@@ -36,7 +36,7 @@ namespace Unity.ExchangeRates.Api.Controllers
         public async Task<IActionResult> GetRate([FromQuery] string? currency, [FromQuery] string? date)
         {
             _logger.LogDebug("GetRate request received: currency={currency}, date={date}", currency ?? "ALL", date ?? "latest");
-            var request = new ExchangeRateRequest { currency = currency, date = date };
+            var request = new ExchangeRateRequest { Currency = currency, Date = date };
             var query = _mapper.Map<ExchangeRateQuery>(request);
             var result = await _mediator.Send(query);
             return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
@@ -52,7 +52,7 @@ namespace Unity.ExchangeRates.Api.Controllers
             var result = await _mediator.Send(query);
             return ApiResponse<BaseResult>(result);
         }
-
+        /*
         [HttpPost("sync")]
         [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(void), StatusCodes.Status400BadRequest)]
@@ -65,5 +65,6 @@ namespace Unity.ExchangeRates.Api.Controllers
             var result = await _mediator.Send(command);
             return ApiResponse<BaseResponse, BaseResult>(_mapper.Map<BaseResponse>(result.ValueOrDefault), result);
         }
+        */
     }
 }

@@ -5,23 +5,16 @@ using Unity.ExchangeRates.Repository;
 
 namespace Unity.ExchangeRates.Infrastructure
 {
-    public class UnitOfWork : IUnitOfWork
+    public class UnitOfWork(
+        AppDbContext context,
+        IExchangeRateRepository exchangeRates,
+        ILogger<UnitOfWork> logger) : IUnitOfWork
     {
-        private readonly AppDbContext _context;
-        private readonly ILogger<UnitOfWork> _logger;
+        private readonly AppDbContext _context = context;
+        private readonly ILogger<UnitOfWork> _logger = logger;
         private IDbContextTransaction? _transaction;
 
-        public IExchangeRateRepository ExchangeRates { get; }
-
-        public UnitOfWork(
-            AppDbContext context,
-            IExchangeRateRepository exchangeRates,
-            ILogger<UnitOfWork> logger)
-        {
-            _context = context;
-            ExchangeRates = exchangeRates;
-            _logger = logger;
-        }
+        public IExchangeRateRepository ExchangeRates { get; } = exchangeRates;
 
         public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
         {
@@ -55,6 +48,7 @@ namespace Unity.ExchangeRates.Infrastructure
         {
             _transaction?.Dispose();
             _context.Dispose();
+            GC.SuppressFinalize(this);
         }
     }
 }

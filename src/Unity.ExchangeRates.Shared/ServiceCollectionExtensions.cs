@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Polly;
 using Polly.Extensions.Http;
+using Polly.Retry;
 using Polly.Timeout;
 using Unity.ExchangeRates.Service.Configurations;
 using Unity.ExchangeRates.Shared.Jobs;
@@ -20,7 +21,7 @@ namespace Unity.ExchangeRates.Shared
             return services;
         }
 
-        private static IServiceCollection AddHttpClients(this IServiceCollection services, IConfiguration configuration)
+        private static IServiceCollection AddHttpClients(this IServiceCollection services, IConfiguration _)
         {
             services.AddHttpClient("BnmClient", (serviceProvider, client) =>
             {
@@ -55,23 +56,23 @@ namespace Unity.ExchangeRates.Shared
         /// Retries on transient HTTP errors (5xx, 408) and per-attempt timeouts.
         /// 3 retries with exponential backoff: 1s → 2s → 5s.
         /// </summary>
-        private static IAsyncPolicy<HttpResponseMessage> BuildRetryPolicy()
+        private static AsyncRetryPolicy<HttpResponseMessage> BuildRetryPolicy()
         {
             return HttpPolicyExtensions
                 .HandleTransientHttpError()
                 .Or<TimeoutRejectedException>()
-                .WaitAndRetryAsync(new[]
-                {
+                .WaitAndRetryAsync(
+                [
                     TimeSpan.FromSeconds(1),
                     TimeSpan.FromSeconds(2),
                     TimeSpan.FromSeconds(5)
-                });
+                ]);
         }
 
         /// <summary>
         /// Each individual HTTP attempt gets 10 seconds before Polly cancels it.
         /// </summary>
-        private static IAsyncPolicy<HttpResponseMessage> BuildTimeoutPolicy()
+        private static AsyncTimeoutPolicy<HttpResponseMessage> BuildTimeoutPolicy()
         {
             return Policy.TimeoutAsync<HttpResponseMessage>(TimeSpan.FromSeconds(10));
         }

@@ -37,16 +37,16 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.Currencies
 
                 return new BaseResult()
                 {
-                    data = result
+                    Data = result
                 };
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "GetCurrenciesQueryHandler: Failed to retrieve currencies");
-                return Result.Fail(new Service.Common.Errors.GeneralError()
+                return Result.Fail(new Common.Errors.GeneralError()
                 {
-                    errorCode = "00500",
-                    errorMsg = "An unexpected error occurred while retrieving currencies."
+                    ErrorCode = "00500",
+                    ErrorMsg = "An unexpected error occurred while retrieving currencies."
                 });
             }
         }

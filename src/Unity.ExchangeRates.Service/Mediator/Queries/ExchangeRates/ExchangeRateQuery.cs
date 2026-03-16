@@ -6,7 +6,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
 {
     public class ExchangeRateQuery : IRequest<Result<BaseResult>>
     {
-        public string? currency { get; set; }
-        public string? date { get; set; }
+        public string? Currency { get; set; }
+        public string? Date { get; set; }
     }
 }

@@ -12,7 +12,11 @@ using Unity.ExchangeRates.Service.Configurations;
 
 namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
 {
-    public class ExchangeRateSyncCommandHandler : IRequestHandler<ExchangeRateSyncCommand, Result<BaseResult>>
+    public class ExchangeRateSyncCommandHandler(
+        IUnitOfWork unitOfWork,
+        IHttpClientFactory httpClientFactory,
+        IOptions<BnmApiOptions> settings,
+        ILogger<ExchangeRateSyncCommandHandler> logger) : IRequestHandler<ExchangeRateSyncCommand, Result<BaseResult>>
     {
         /// <summary>
         /// Currency used to probe BNM API availability for a given date and session.
@@ -20,29 +24,17 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
         /// </summary>
         private const string ReferenceCurrency = "usd";
 
-        private readonly IUnitOfWork _unitOfWork;
-        private readonly HttpClient _httpClient;
-        private readonly BnmApiOptions _settings;
-        private readonly ILogger<ExchangeRateSyncCommandHandler> _logger;
-
-        public ExchangeRateSyncCommandHandler(
-            IUnitOfWork unitOfWork,
-            IHttpClientFactory httpClientFactory,
-            IOptions<BnmApiOptions> settings,
-            ILogger<ExchangeRateSyncCommandHandler> logger)
-        {
-            _unitOfWork = unitOfWork;
-            _httpClient = httpClientFactory.CreateClient("BnmClient");
-            _settings = settings.Value;
-            _logger = logger;
-        }
+        private readonly IUnitOfWork _unitOfWork = unitOfWork;
+        private readonly HttpClient _httpClient = httpClientFactory.CreateClient("BnmClient");
+        private readonly BnmApiOptions _settings = settings.Value;
+        private readonly ILogger<ExchangeRateSyncCommandHandler> _logger = logger;
 
         public async ValueTask<Result<BaseResult>> Handle(ExchangeRateSyncCommand request, CancellationToken cancellationToken)
         {
             try
             {
-                var inputDate = DateTime.ParseExact(request.date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-                var session = !string.IsNullOrEmpty(request.session) ? request.session : _settings.DefaultSession;
+                var inputDate = DateTime.ParseExact(request.Date!, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                var session = !string.IsNullOrEmpty(request.Session) ? request.Session : _settings.DefaultSession;
                 var dateStr = inputDate.ToString("yyyy-MM-dd");
 
                 // Step 1: Idempotency — skip if this session has already been synced
@@ -52,7 +44,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                         session, dateStr);
                     return new BaseResult()
                     {
-                        data = $"Session {session} for {dateStr} has already been synced."
+                        Data = $"Session {session} for {dateStr} has already been synced."
                     };
                 }
 
@@ -63,8 +55,8 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
                         dateStr, session);
                     return Result.Fail(new NotFoundError()
                     {
-                        errorCode = "00404",
-                        errorMsg = "No records found."
+                        ErrorCode = "00404",
+                        ErrorMsg = "No records found."
                     });
                 }
 
@@ -132,18 +124,18 @@ namespace Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates
 
                 return new BaseResult()
                 {
-                    data = $"Synced {syncedCount} of {currencies.Count} currencies for {dateStr} (session={session})"
+                    Data = $"Synced {syncedCount} of {currencies.Count} currencies for {dateStr} (session={session})"
                 };
             }
             catch (Exception ex)
             {
                 await _unitOfWork.RollbackAsync(cancellationToken);
                 _logger.LogError(ex, "ExchangeRateSyncCommandHandler failed for date={Date}, session={Session}. Transaction rolled back.",
-                    request.date, request.session);
+                    request.Date, request.Session);
                 return Result.Fail(new GeneralError()
                 {
-                    errorCode = "00500",
-                    errorMsg = "An unexpected error occurred while syncing exchange rates."
+                    ErrorCode = "00500",
+                    ErrorMsg = "An unexpected error occurred while syncing exchange rates."
                 });
             }
         }

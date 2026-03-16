@@ -6,16 +6,10 @@ using Unity.ExchangeRates.Repository;
 
 namespace Unity.ExchangeRates.Infrastructure.Repositories
 {
-    public class ExchangeRateRepository : IExchangeRateRepository
+    public class ExchangeRateRepository(AppDbContext context, ILogger<ExchangeRateRepository> logger) : IExchangeRateRepository
     {
-        private readonly AppDbContext _context;
-        private readonly ILogger<ExchangeRateRepository> _logger;
-
-        public ExchangeRateRepository(AppDbContext context, ILogger<ExchangeRateRepository> logger)
-        {
-            _context = context;
-            _logger = logger;
-        }
+        private readonly AppDbContext _context = context;
+        private readonly ILogger<ExchangeRateRepository> _logger = logger;
 
         public async Task<List<Currency>> GetActiveCurrenciesAsync(CancellationToken cancellationToken)
         {

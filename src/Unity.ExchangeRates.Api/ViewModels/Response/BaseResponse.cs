@@ -5,18 +5,18 @@ namespace Unity.ExchangeRates.Api.ViewModels.Response
 {
     public class BaseResponse
     {
-        public string appId { get; set; } = "unity-exchange-rates";
-        public string status { get; set; }
-        public string timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture);
-        public string traceId { get; set; } = Activity.Current?.Id;
+        public string AppId { get; set; } = "unity-exchange-rates";
+        public string Status { get; set; }
+        public string Timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture);
+        public string TraceId { get; set; } = Activity.Current?.Id;
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public string? errorCode { get; set; }
+        public string? ErrorCode { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public string? errorMsg { get; set; }
+        public string? ErrorMsg { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public object? data { get; set; }
+        public object? Data { get; set; }
     }
 }

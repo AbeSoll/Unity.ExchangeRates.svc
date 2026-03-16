@@ -10,25 +10,25 @@ namespace Unity.ExchangeRates.Service.Common.Errors
     {
         [System.Text.Json.Serialization.JsonIgnore]
         [Newtonsoft.Json.JsonIgnore]
-        public List<IError> Reasons => new List<IError>();
+        public List<IError> Reasons => [];
 
         [System.Text.Json.Serialization.JsonIgnore]
         [Newtonsoft.Json.JsonIgnore]
-        public Dictionary<string, object> Metadata => new Dictionary<string, object>();
+        public Dictionary<string, object> Metadata => [];
 
         [System.Text.Json.Serialization.JsonIgnore]
         [Newtonsoft.Json.JsonIgnore]
         public string? Message { get; private set; }
 
-        public string status { get; set; } = StandardFormat.FailedStatus;
-        public string timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture);
-        public string traceId { get; set; } = Activity.Current?.Id;
-        public string errorCode { get; set; } = string.Empty;
-        public string errorMsg { get; set; } = ResponseMessage.NOTFOUND_ERROR;
+        public string Status { get; set; } = StandardFormat.FailedStatus;
+        public string Timestamp { get; set; } = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture);
+        public string TraceId { get; set; } = Activity.Current?.Id;
+        public string ErrorCode { get; set; } = string.Empty;
+        public string ErrorMsg { get; set; } = ResponseMessage.NOTFOUND_ERROR;
 
         [System.Text.Json.Serialization.JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         [Newtonsoft.Json.JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
-        public object? data { get; set; }
+        public object? Data { get; set; }
 
         public NotFoundError()
         {

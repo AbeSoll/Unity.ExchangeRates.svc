@@ -6,11 +6,11 @@ using Unity.ExchangeRates.Infrastructure.Data;
 
 namespace Unity.ExchangeRates.Api.Middlewares
 {
-    public class AuditLogMiddleware
+    public class AuditLogMiddleware(RequestDelegate next, ILogger<AuditLogMiddleware> logger, IServiceScopeFactory scopeFactory)
     {
-        private readonly RequestDelegate _next;
-        private readonly ILogger<AuditLogMiddleware> _logger;
-        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly RequestDelegate _next = next;
+        private readonly ILogger<AuditLogMiddleware> _logger = logger;
+        private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
 
         // Endpoints to skip audit logging
         private static readonly string[] SkipPaths = ["/swagger", "/hangfire", "/favicon.ico", "/health"];
@@ -22,13 +22,6 @@ namespace Unity.ExchangeRates.Api.Middlewares
         private static readonly string[] SensitiveFields = ["password", "token", "secret", "apiKey", "authorization"];
 
         private const int MaxBodyLength = 4096; // 4KB max body capture
-
-        public AuditLogMiddleware(RequestDelegate next, ILogger<AuditLogMiddleware> logger, IServiceScopeFactory scopeFactory)
-        {
-            _next = next;
-            _logger = logger;
-            _scopeFactory = scopeFactory;
-        }
 
         public async Task InvokeAsync(HttpContext context)
         {

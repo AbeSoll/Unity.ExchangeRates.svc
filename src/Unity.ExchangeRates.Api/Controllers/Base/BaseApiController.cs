@@ -1,6 +1,5 @@
 using FluentResults;
 using Mediator;
-using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System.Diagnostics;
@@ -17,8 +16,7 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
         protected IMediator Mediator => _mediator ??= HttpContext.RequestServices.GetService<IMediator>();
 
         protected new IActionResult ApiResponse<T>(
-            Result<T> result,
-            [CallerMemberName] string? caller = default)
+            Result<T> result)
         {
             if (result is null || (result.IsSuccess && result.ValueOrDefault is null))
                 return HandleNullProblem();
@@ -26,16 +24,19 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
             if (result.IsSuccess)
                 return Ok(result.ValueOrDefault);
 
-            if (result.Errors.Any(x => x is ValidationError))
-                return HandleValidationProblem(result);
+            // CA1826 fix: Use collection directly instead of .Any()
+            foreach (var error in result.Errors)
+            {
+                if (error is ValidationError)
+                    return HandleValidationProblem(result);
+            }
 
             return HandleFluentResultProblem(result);
         }
 
         protected new IActionResult ApiResponse<T, T2>(
             Result<T> responseResult,
-            Result<T2> result,
-            [CallerMemberName] string? caller = default)
+            Result<T2> result)
         {
             if (result is null || (result.IsSuccess && result.ValueOrDefault is null))
                 return HandleNullProblem();
@@ -43,8 +44,12 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
             if (result.IsSuccess)
                 return Ok(responseResult.ValueOrDefault);
 
-            if (result.Errors.Any(x => x is ValidationError))
-                return HandleValidationProblem(result);
+            // CA1826 fix: Use collection directly instead of .Any()
+            foreach (var error in result.Errors)
+            {
+                if (error is ValidationError)
+                    return HandleValidationProblem(result);
+            }
 
             return HandleFluentResultProblem(result);
         }
@@ -56,27 +61,27 @@ namespace Unity.ExchangeRates.Api.Controllers.Base
             Response.StatusCode = statusCode;
             var resp = new BaseResponse()
             {
-                status = StandardFormat.FailedStatus,
-                timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
-                traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                errorCode = "00500",
-                errorMsg = ResponseMessage.GENERAL_ERROR
+                Status = StandardFormat.FailedStatus,
+                Timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
+                TraceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ErrorCode = "00500",
+                ErrorMsg = ResponseMessage.GENERAL_ERROR
             };
             return new JsonResult(resp);
         }
 
-        private IActionResult HandleNullProblem()
+        private JsonResult HandleNullProblem()
         {
             int statusCode = StatusCodes.Status404NotFound;
 
             Response.StatusCode = statusCode;
             var resp = new BaseResponse()
             {
-                status = StandardFormat.FailedStatus,
-                timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
-                traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                errorCode = "00404",
-                errorMsg = String.Empty
+                Status = StandardFormat.FailedStatus,
+                Timestamp = DateTime.Now.ToString("yyyy-MM-ddTHH\\:mm\\:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture),
+                TraceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ErrorCode = "00404",
+                ErrorMsg = String.Empty
             };
             return new JsonResult(resp);
         }

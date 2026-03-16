@@ -1,7 +1,6 @@
 using FluentResults;
 using Mediator;
 using Microsoft.Extensions.Logging;
-using Unity.ExchangeRates.Domain.Models;
 using Unity.ExchangeRates.Service.Models.Results;
 using Unity.ExchangeRates.Service.Common.Errors;
 using Unity.ExchangeRates.Repository;
@@ -27,7 +26,7 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
             {
                 // Resolve date: explicit value or the latest available date in the database
                 DateTime rateDate;
-                if (string.IsNullOrEmpty(request.date))
+                if (string.IsNullOrEmpty(request.Date))
                 {
                     var latestDate = await _repository.GetLatestRateDateAsync(cancellationToken);
                     if (latestDate is null)
@@ -35,8 +34,8 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                         _logger.LogDebug("ExchangeRateQueryHandler: No date provided and no data exists in database");
                         return Result.Fail(new NotFoundError()
                         {
-                            errorCode = "00404",
-                            errorMsg = "No records found."
+                            ErrorCode = "00404",
+                            ErrorMsg = "No records found."
                         });
                     }
                     rateDate = latestDate.Value;
@@ -45,13 +44,13 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                 }
                 else
                 {
-                    rateDate = DateTime.ParseExact(request.date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                    rateDate = DateTime.ParseExact(request.Date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
                 }
 
                 var dateStr = rateDate.ToString("yyyy-MM-dd");
 
                 // If no currency specified — return ALL rates for the date (latest session per currency)
-                if (string.IsNullOrEmpty(request.currency))
+                if (string.IsNullOrEmpty(request.Currency))
                 {
                     _logger.LogDebug("ExchangeRateQueryHandler: Fetching ALL rates for date={date}", dateStr);
 
@@ -62,8 +61,8 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                         _logger.LogDebug("ExchangeRateQueryHandler: No rates found for date={date}", dateStr);
                         return Result.Fail(new NotFoundError()
                         {
-                            errorCode = "00404",
-                            errorMsg = "No records found."
+                            ErrorCode = "00404",
+                            ErrorMsg = "No records found."
                         });
                     }
 
@@ -88,29 +87,29 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                         source = "Bank Negara Malaysia (BNM) Open API"
                     }).ToList();
 
-                    return new BaseResult() { data = allRatesResult };
+                    return new BaseResult() { Data = allRatesResult };
                 }
 
                 // Single currency — return the latest session available for this specific currency
                 _logger.LogDebug("ExchangeRateQueryHandler: Querying DB for currency={currency}, date={date}",
-                    request.currency, dateStr);
+                    request.Currency, dateStr);
 
-                var history = await _repository.GetRateByLatestSessionAsync(request.currency, rateDate, cancellationToken);
+                var history = await _repository.GetRateByLatestSessionAsync(request.Currency, rateDate, cancellationToken);
 
                 if (history is null)
                 {
                     _logger.LogDebug("ExchangeRateQueryHandler: No rate found in DB for currency={currency}, date={date}",
-                        request.currency, dateStr);
+                        request.Currency, dateStr);
 
                     return Result.Fail(new NotFoundError()
                     {
-                        errorCode = "00404",
-                        errorMsg = "No records found."
+                        ErrorCode = "00404",
+                        ErrorMsg = "No records found."
                     });
                 }
 
                 _logger.LogDebug("ExchangeRateQueryHandler: Success for currency={currency}, date={date}, session={session}",
-                    request.currency, dateStr, history.Session);
+                    request.Currency, dateStr, history.Session);
 
                 var singleResult = new
                 {
@@ -129,12 +128,12 @@ namespace Unity.ExchangeRates.Service.Mediator.Queries.ExchangeRates
                     source = "Bank Negara Malaysia (BNM) Open API"
                 };
 
-                return new BaseResult() { data = singleResult };
+                return new BaseResult() { Data = singleResult };
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "ExchangeRateQueryHandler failed for currency={currency}, date={date}", request.currency, request.date);
-                return Result.Fail(new GeneralError() { errorCode = "00500", errorMsg = "An unexpected error occurred while retrieving exchange rates." });
+                _logger.LogError(ex, "ExchangeRateQueryHandler failed for currency={currency}, date={date}", request.Currency, request.Date);
+                return Result.Fail(new GeneralError() { ErrorCode = "00500", ErrorMsg = "An unexpected error occurred while retrieving exchange rates." });
             }
         }
     }

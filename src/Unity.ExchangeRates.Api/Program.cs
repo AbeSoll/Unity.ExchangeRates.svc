@@ -1,5 +1,4 @@
-﻿using AspNetCoreRateLimit;
-using Asp.Versioning;
+﻿using Asp.Versioning;
 using Asp.Versioning.ApiExplorer;
 using Hangfire;
 using Serilog;
@@ -38,9 +37,6 @@ builder.Services.AddControllers();
 // API Versioning
 ConfigureApiVersioning(builder.Services);
 
-// Rate Limiting
-ConfigureRateLimit(builder.Services, builder.Configuration);
-
 // Swagger
 ConfigureSwagger(builder.Services);
 
@@ -57,7 +53,6 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 });
 
 app.UseMiddleware<ExceptionHandlerMiddleware>();
-app.UseIpRateLimiting();
 
 if (app.Environment.IsDevelopment())
 {
@@ -177,18 +172,6 @@ static void ConfigureSwagger(IServiceCollection services)
 
     services.AddSwaggerGen();
     services.ConfigureOptions<ConfigureSwaggerOptions>();
-}
-
-// ============================================================
-// Rate Limiting Configuration 
-// ============================================================
-static void ConfigureRateLimit(IServiceCollection services, IConfiguration configuration)
-{
-    services.AddMemoryCache();
-    services.Configure<IpRateLimitOptions>(configuration.GetSection(nameof(IpRateLimitOptions)));
-    services.Configure<IpRateLimitPolicies>(configuration.GetSection(nameof(IpRateLimitPolicies)));
-    services.AddInMemoryRateLimiting();
-    services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 }
 
 // ============================================================

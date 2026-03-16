@@ -5,16 +5,10 @@ using Unity.ExchangeRates.Service.Mediator.Commands.ExchangeRates;
 
 namespace Unity.ExchangeRates.Shared.Jobs
 {
-    public class ExchangeRateSyncJob : IExchangeRateSyncJob
+    public class ExchangeRateSyncJob(ISender mediator, ILogger<ExchangeRateSyncJob> logger) : IExchangeRateSyncJob
     {
-        private readonly ISender _mediator;
-        private readonly ILogger<ExchangeRateSyncJob> _logger;
-
-        public ExchangeRateSyncJob(ISender mediator, ILogger<ExchangeRateSyncJob> logger)
-        {
-            _mediator = mediator;
-            _logger = logger;
-        }
+        private readonly ISender _mediator = mediator;
+        private readonly ILogger<ExchangeRateSyncJob> _logger = logger;
 
         public async Task SyncSessionAsync(string session, int dateOffset = 0, CancellationToken cancellationToken = default)
         {
@@ -25,7 +19,7 @@ namespace Unity.ExchangeRates.Shared.Jobs
                 _logger.LogInformation("Hangfire SyncSession: Starting sync. Session={Session}, RateDate={RateDate}, DateOffset={DateOffset}",
                     session, rateDate, dateOffset);
 
-                var command = new ExchangeRateSyncCommand { date = rateDate, session = session };
+                var command = new ExchangeRateSyncCommand { Date = rateDate, Session = session };
                 var result = await _mediator.Send(command, cancellationToken);
 
                 if (result.IsSuccess)
